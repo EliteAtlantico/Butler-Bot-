@@ -16,6 +16,7 @@ from __future__ import annotations
 import numpy as np
 
 from . import occupancy, perception, planning
+from .scene import SceneInfo
 
 
 def _wrap(a):
@@ -27,19 +28,34 @@ class VisualNavigator:
 
     SCAN, NAVIGATE, ARRIVED, STUCK = "scan", "navigate", "arrived", "stuck"
 
-    def __init__(self, goal_label: str = perception.GOAL_LABEL,
+    @classmethod
+    def for_bot(cls, bot, goal=None, camera: str | None = None, **kw):
+        """Build a navigator configured from the scene the robot is in.
+
+        Reads the world extent, floor height, footprint radius and camera off
+        the model, so the same call works in a scene this code has never seen.
+        `goal` may be an (x, y) world coordinate -- which needs no detector
+        and no colour palette -- or a class label to look for.
+        """
+        info = SceneInfo.from_model(bot.model, bot.data, camera=camera)
+        return cls(scene=info, goal=goal, **kw)
+
+    def __init__(self, goal=None, scene: SceneInfo | None = None,
+                 goal_label: str = perception.GOAL_LABEL,
                  scan_rate: float = 0.7, scan_turns: float = 1.0,
                  sense_period: float = 0.2, plan_period: float = 1.0,
                  stop_distance: float = 1.0, v_max: float = 0.42,
                  w_max: float = 1.0, waypoint_tol: float = 0.22,
                  heading_gain: float = 1.5, width: int = 320, height: int = 240,
-                 max_range: float = 12.0, robot_radius: float = 0.30,
+                 max_range: float = 12.0, robot_radius: float | None = None,
                  re_engage_margin: float = 0.75,
                  grid: occupancy.OccupancyGrid | None = None,
+                 resolution: float = 0.10,
                  detector=None, verbose: bool = False):
         # `detector(obs, robot_yaw=...) -> list[Detection]`. Defaults to the
         # colour detector; a YoloDetector satisfies the same contract, so
         # nothing below this line changes when you swap them.
+        self.scene = scene
         self.detector = detector if detector is not None else perception.detect
         self.goal_label = goal_label
         self.scan_rate, self.scan_turns = scan_rate, scan_turns
@@ -48,10 +64,30 @@ class VisualNavigator:
         self.v_max, self.w_max = v_max, w_max
         self.waypoint_tol, self.heading_gain = waypoint_tol, heading_gain
         self.width, self.height, self.max_range = width, height, max_range
-        self.robot_radius = robot_radius
         self.re_engage_margin = re_engage_margin
-        self.grid = grid if grid is not None else occupancy.OccupancyGrid()
         self.verbose = verbose
+
+        # Everything below is measured from the scene when one was supplied,
+        # and falls back to the values tuned for the original course when it
+        # was not -- so existing callers keep their behaviour exactly.
+        self.camera = scene.camera if scene else None
+        self.floor_z = scene.floor_z if scene else 0.0
+        self.robot_radius = (robot_radius if robot_radius is not None
+                             else (scene.robot_radius + 0.05 if scene else 0.30))
+        self.self_radius = (scene.robot_radius + 0.25) if scene else 0.55
+        if scene:
+            self.max_range = min(max_range, scene.map_range * 1.5)
+        self.grid = grid if grid is not None else (
+            occupancy.OccupancyGrid.covering(scene.bounds, resolution) if scene
+            else occupancy.OccupancyGrid())
+
+        # A coordinate goal needs no detector and no colour palette; a label
+        # goal has to be found first, which is what the scan is for.
+        self.fixed_goal = None
+        if goal is not None and not isinstance(goal, str):
+            self.fixed_goal = np.asarray(goal, float)[:2]
+        elif isinstance(goal, str):
+            self.goal_label = goal
 
         self.state = self.SCAN
         self.detections: list[perception.Detection] = []
@@ -82,8 +118,8 @@ class VisualNavigator:
 
     # ------------------------------------------------------------- sensing
     def sense(self, bot, t: float = 0.0):
-        self.obs = perception.observe(bot, width=self.width, height=self.height,
-                                      max_range=self.max_range)
+        self.obs = perception.observe(bot, camera=self.camera, width=self.width,
+                                      height=self.height, max_range=self.max_range)
         # Pass sim time through so time-gated detectors (e.g. the local LLM)
         # pace themselves on the sim clock, not the wall clock.
         self.detections = self.detector(self.obs, robot_yaw=bot.yaw, t=t)
@@ -91,9 +127,14 @@ class VisualNavigator:
             self.best_obs, self.best_detections, self.best_time = (
                 self.obs, list(self.detections), t)
 
-        hits = perception.obstacle_points(self.obs)
-        free = perception.floor_points(self.obs)
+        hits = perception.obstacle_points(self.obs, self_radius=self.self_radius,
+                                          floor_z=self.floor_z)
+        free = perception.floor_points(self.obs, floor_z=self.floor_z)
         self.grid.integrate(self.obs.cam_pos[:2], hits, free)
+
+        if self.fixed_goal is not None:
+            self.goal_xy = self.fixed_goal
+            return
 
         goals = [d for d in self.detections if d.label == self.goal_label]
         if goals:

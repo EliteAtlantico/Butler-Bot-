@@ -168,7 +168,7 @@ def main():
                 # only create a local, and the loop would keep running the
                 # stale instance with its old clock and phase state.
                 current["algorithm"] = make_algorithm(args.algorithm, bot)
-                print(f"reset  t=0.00s")
+                print("reset  t=0.00s")
 
         with mujoco.viewer.launch_passive(bot.model, bot.data,
                                           key_callback=on_key) as viewer:

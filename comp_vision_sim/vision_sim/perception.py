@@ -125,9 +125,17 @@ def deproject(depth: np.ndarray, intr: Intrinsics) -> np.ndarray:
                      -z], -1)
 
 
-def observe(bot, camera: str = CAMERA, width: int = 320, height: int = 240,
+def observe(bot, camera: str | None = None, width: int = 320, height: int = 240,
             max_range: float = 12.0) -> Observation:
-    """Render one registered RGB-D frame and lift it into world coordinates."""
+    """Render one registered RGB-D frame and lift it into world coordinates.
+
+    `camera` defaults to whatever forward-looking fixed camera the model
+    happens to declare, so an unfamiliar scene does not need to have named
+    its camera `head_depth`.
+    """
+    if camera is None:
+        from .scene import pick_camera
+        camera = pick_camera(bot.model)
     cam_id = mujoco.mj_name2id(bot.model, mujoco.mjtObj.mjOBJ_CAMERA, camera)
     if cam_id < 0:
         raise ValueError(f"no camera named {camera!r}")
@@ -186,14 +194,15 @@ def _cluster_xy(xy: np.ndarray, res: float) -> np.ndarray:
 def detect(obs: Observation, classes=DEFAULT_CLASSES, min_height: float = 0.12,
            max_height: float = 2.5, min_range: float = 0.4,
            self_radius: float = 0.55, cluster_res: float = 0.3,
-           robot_yaw: float = 0.0, **_) -> list[Detection]:
+           robot_yaw: float = 0.0, floor_z: float = 0.0,
+           **_) -> list[Detection]:
     """Colour-classify pixels, then cluster the survivors in 3D.
 
     `min_height` is what removes the floor, which renders the same hue as the
     blue pillars and would otherwise swamp every blue detection.
     """
     hsv = rgb_to_hsv(obs.rgb)
-    z = obs.points[..., 2]
+    z = obs.points[..., 2] - floor_z
     ground = obs.valid & (z > min_height) & (z < max_height)
     ground &= obs.depth > min_range
     # Anything standing within self_radius of the chassis is the robot's own
@@ -229,6 +238,57 @@ def detect(obs: Observation, classes=DEFAULT_CLASSES, min_height: float = 0.12,
     return out
 
 
+class GeometricDetector:
+    """Colour-free detection: cluster whatever stands above the floor.
+
+    The colour detector needs a palette that matches the scene. This one
+    needs nothing -- it reports every clustered obstacle as one unlabelled
+    object, which is all a planner requires. Use it when driving a scene
+    whose contents are unknown, paired with a coordinate goal.
+    """
+
+    def __init__(self, label: str = "obstacle", cluster_res: float = 0.35,
+                 min_points: int = 30, min_height: float = 0.12,
+                 max_height: float = 2.5, min_range: float = 0.4,
+                 max_range: float = 10.0, self_radius: float = 0.55,
+                 floor_z: float = 0.0):
+        self.label, self.cluster_res, self.min_points = label, cluster_res, min_points
+        self.min_height, self.max_height = min_height, max_height
+        self.min_range, self.max_range = min_range, max_range
+        self.self_radius, self.floor_z = self_radius, floor_z
+
+    def __call__(self, obs: Observation, robot_yaw: float = 0.0,
+                 **_) -> list[Detection]:
+        z = obs.points[..., 2] - self.floor_z
+        sel = (obs.valid & (z > self.min_height) & (z < self.max_height) &
+               (obs.depth > self.min_range) & (obs.depth < self.max_range))
+        sel &= np.linalg.norm(obs.points[..., :2] - obs.robot_xy,
+                              axis=-1) > self.self_radius
+        if not sel.any():
+            return []
+        pts = obs.points[sel]
+        pix = np.argwhere(sel)
+        labels = _cluster_xy(pts[:, :2], self.cluster_res)
+        out: list[Detection] = []
+        for lab in range(labels.max() + 1):
+            member = labels == lab
+            blob = pts[member]
+            if len(blob) < self.min_points:
+                continue
+            vu = pix[member]
+            centre = blob.mean(0)
+            delta = centre[:2] - obs.robot_xy
+            out.append(Detection(
+                label=self.label, position=centre,
+                distance=float(np.linalg.norm(centre - obs.cam_pos)),
+                bearing=float(np.arctan2(delta[1], delta[0]) - robot_yaw),
+                extent=blob.max(0) - blob.min(0), pixels=int(len(blob)),
+                bbox=(int(vu[:, 1].min()), int(vu[:, 0].min()),
+                      int(vu[:, 1].max()), int(vu[:, 0].max()))))
+        out.sort(key=lambda d: d.distance)
+        return out
+
+
 # Past this the stereo baseline of a real RGB-D head stops resolving disparity,
 # so mapping anything further would be trusting numbers hardware cannot give.
 MAP_RANGE = 8.0
@@ -237,13 +297,17 @@ MAP_RANGE = 8.0
 def obstacle_points(obs: Observation, min_height: float = 0.10,
                     max_height: float = 2.0, min_range: float = 0.4,
                     max_range: float = MAP_RANGE,
-                    self_radius: float = 0.55) -> np.ndarray:
+                    self_radius: float = 0.55,
+                    floor_z: float = 0.0) -> np.ndarray:
     """Every return that is neither floor nor sky, as world xyz.
+
+    Heights are relative to `floor_z`, not to the world origin, so a scene
+    whose ground plane is not at z=0 still separates floor from obstacle.
 
     Deliberately colour-blind: a depth camera does not know what it is looking
     at, and the map should not depend on the detector recognising an object.
     """
-    z = obs.points[..., 2]
+    z = obs.points[..., 2] - floor_z
     sel = (obs.valid & (z > min_height) & (z < max_height) &
            (obs.depth > min_range) & (obs.depth < max_range))
     sel &= np.linalg.norm(obs.points[..., :2] - obs.robot_xy, axis=-1) > self_radius
@@ -252,9 +316,10 @@ def obstacle_points(obs: Observation, min_height: float = 0.10,
 
 def floor_points(obs: Observation, max_height: float = 0.10,
                  min_range: float = 0.4,
-                 max_range: float = MAP_RANGE) -> np.ndarray:
+                 max_range: float = MAP_RANGE,
+                 floor_z: float = 0.0) -> np.ndarray:
     """Returns that landed on the ground plane -- observed free space."""
-    z = obs.points[..., 2]
+    z = obs.points[..., 2] - floor_z
     sel = (obs.valid & (z <= max_height) & (obs.depth > min_range) &
            (obs.depth < max_range))
     return obs.points[sel]

@@ -1,0 +1,137 @@
+"""Read the scene's own geometry, so the stack has nothing hard-coded in it.
+
+Everything the navigator used to assume -- a floor at z=0, a world inside
++-6 m, a camera called `head_depth`, a 0.30 m robot -- is a property of one
+particular XML. Measuring them from the model instead is what lets the same
+code drive a different scene, or a different robot, without edits.
+
+    info = SceneInfo.from_model(bot.model, bot.data)
+    grid = OccupancyGrid.covering(info.bounds, resolution=0.10)
+
+The robot/scenery split is the one non-obvious bit, and the obvious test is
+wrong: `body_rootid` does NOT separate them, because a static prop parented
+to the world roots at itself exactly like a free-floating robot does. The
+test that works is `body_weldid`, which is 0 for anything rigidly welded to
+the world -- so scenery welds to 0 and articulated bodies do not. No name
+matching required, which is what lets an unfamiliar scene work.
+"""
+from __future__ import annotations
+
+from dataclasses import dataclass
+
+import mujoco
+import numpy as np
+
+
+@dataclass(frozen=True)
+class SceneInfo:
+    bounds: tuple[float, float, float, float]   # xmin, ymin, xmax, ymax
+    floor_z: float
+    robot_radius: float
+    robot_top: float
+    camera: str
+    map_range: float
+
+    @property
+    def span(self) -> tuple[float, float]:
+        x0, y0, x1, y1 = self.bounds
+        return x1 - x0, y1 - y0
+
+    def describe(self) -> str:
+        x0, y0, x1, y1 = self.bounds
+        return (f"scene x[{x0:.1f},{x1:.1f}] y[{y0:.1f},{y1:.1f}]  "
+                f"floor z={self.floor_z:.2f}  robot r={self.robot_radius:.2f} "
+                f"top={self.robot_top:.2f}  camera={self.camera!r}  "
+                f"map_range={self.map_range:.1f}m")
+
+    # ------------------------------------------------------------ discovery
+    @classmethod
+    def from_model(cls, model, data, camera: str | None = None,
+                   margin: float = 2.0, max_map_range: float = 8.0):
+        robot = _robot_geoms(model)
+        static = ~robot
+
+        floor_z = _floor_height(model, data, static)
+        radius, top = _robot_extent(model, data, robot, floor_z)
+        bounds = _scenery_bounds(model, data, static, floor_z)
+
+        # The grid has to hold the robot as well as the scenery, or the very
+        # first to_cell() falls outside it.
+        rx, ry = float(data.xpos[_robot_root(model)][0]), float(data.xpos[_robot_root(model)][1])
+        x0 = min(bounds[0], rx) - margin
+        y0 = min(bounds[1], ry) - margin
+        x1 = max(bounds[2], rx) + margin
+        y1 = max(bounds[3], ry) + margin
+
+        diag = float(np.hypot(x1 - x0, y1 - y0))
+        return cls(bounds=(x0, y0, x1, y1), floor_z=floor_z,
+                   robot_radius=radius, robot_top=top,
+                   camera=camera or pick_camera(model),
+                   map_range=min(max_map_range, diag))
+
+
+def pick_camera(model, prefer=("depth", "rgbd", "head", "front")) -> str:
+    """Choose a forward-looking fixed camera without being told its name."""
+    names = [mujoco.mj_id2name(model, mujoco.mjtObj.mjOBJ_CAMERA, i)
+             for i in range(model.ncam)]
+    names = [n for n in names if n]
+    if not names:
+        raise ValueError("model declares no cameras; the vision stack needs one")
+    fixed = [n for n in names
+             if model.cam_mode[mujoco.mj_name2id(model, mujoco.mjtObj.mjOBJ_CAMERA, n)]
+             == mujoco.mjtCamLight.mjCAMLIGHT_FIXED]
+    pool = fixed or names
+    for want in prefer:
+        for n in pool:
+            if want in n.lower():
+                return n
+    return pool[0]
+
+
+def _robot_root(model) -> int:
+    """The body at the top of the articulated tree, or the world body."""
+    moving = np.where(model.body_weldid != 0)[0]
+    if not len(moving):
+        return 0
+    return int(model.body_rootid[moving[0]])
+
+
+def _robot_geoms(model) -> np.ndarray:
+    """Boolean mask over geoms: True where the geom belongs to a robot."""
+    return model.body_weldid[model.geom_bodyid] != 0
+
+
+def _floor_height(model, data, static: np.ndarray) -> float:
+    planes = np.where(static & (model.geom_type == mujoco.mjtGeom.mjGEOM_PLANE))[0]
+    if len(planes):
+        return float(data.geom_xpos[planes][:, 2].min())
+    ids = np.where(static)[0]
+    if not len(ids):
+        return 0.0
+    return float((data.geom_xpos[ids][:, 2] - model.geom_rbound[ids]).min())
+
+
+def _robot_extent(model, data, robot: np.ndarray, floor_z: float):
+    """Planar footprint radius and height of the robot, from its own geoms."""
+    ids = np.where(robot)[0]
+    if not len(ids):
+        return 0.3, 1.0
+    root = data.xpos[_robot_root(model)][:2]
+    d = np.linalg.norm(data.geom_xpos[ids][:, :2] - root, axis=1) + model.geom_rbound[ids]
+    top = float((data.geom_xpos[ids][:, 2] + model.geom_rbound[ids]).max() - floor_z)
+    # A 95th percentile rather than the max: one stray arm geom sticking out
+    # should not inflate the footprint the planner has to keep clear.
+    return float(np.percentile(d, 95)), top
+
+
+def _scenery_bounds(model, data, static: np.ndarray, floor_z: float):
+    """XY extent of static geometry that stands above the floor."""
+    ids = [g for g in np.where(static)[0]
+           if model.geom_type[g] != mujoco.mjtGeom.mjGEOM_PLANE
+           and data.geom_xpos[g][2] + model.geom_rbound[g] > floor_z + 0.05]
+    if not ids:
+        return (-1.0, -1.0, 1.0, 1.0)
+    pos = data.geom_xpos[ids][:, :2]
+    r = model.geom_rbound[ids][:, None]
+    return (float((pos - r)[:, 0].min()), float((pos - r)[:, 1].min()),
+            float((pos + r)[:, 0].max()), float((pos + r)[:, 1].max()))

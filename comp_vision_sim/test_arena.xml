@@ -1,0 +1,56 @@
+<mujoco model="generality test arena">
+  <!-- A scene the vision stack was NOT written against, used to check that
+       nothing is hard-coded to the obstacle course:
+
+         * it spans x 0..17, far outside the old fixed -6..9 m grid, so a
+           grid that does not size itself to the scene cannot represent the
+           goal at all;
+         * the props are green / purple / grey, none of which appear in the
+           colour detector's palette, so colour thresholding finds nothing
+           and the geometric detector has to carry it;
+         * the route is an S-bend through two offset gaps, so arriving by
+           accident is not possible. -->
+  <include file="../main_mujoco/chopped_dynamic.xml"/>
+  <compiler meshdir="../main_mujoco/meshes/"/>
+
+  <statistic center="7 0 0.6" extent="6.0"/>
+
+  <visual>
+    <headlight diffuse="0.55 0.55 0.55" ambient="0.35 0.35 0.35" specular="0.1 0.1 0.1"/>
+    <rgba haze="0.15 0.25 0.35 1"/>
+    <global azimuth="140" elevation="-20" offwidth="1280" offheight="960"/>
+    <map znear="0.01" zfar="60"/>
+  </visual>
+
+  <asset>
+    <texture type="skybox" builtin="gradient" rgb1="0.25 0.28 0.32" rgb2="0 0 0" width="512" height="3072"/>
+    <texture type="2d" name="grid" builtin="checker" mark="edge" rgb1="0.22 0.24 0.26" rgb2="0.14 0.16 0.18"
+             markrgb="0.6 0.6 0.6" width="300" height="300"/>
+    <material name="grid" texture="grid" texuniform="true" texrepeat="10 10" reflectance="0.05"/>
+    <material name="wall" rgba="0.35 0.70 0.40 1"/>
+    <material name="block" rgba="0.55 0.40 0.75 1"/>
+    <material name="post" rgba="0.80 0.80 0.82 1"/>
+  </asset>
+
+  <worldbody>
+    <light pos="6 0 5" dir="0 0 -1" directional="true" diffuse="0.55 0.55 0.55"/>
+    <light pos="12 4 4" dir="-1 -1 -1" directional="false" diffuse="0.35 0.35 0.35"/>
+    <geom name="floor" size="0 0 0.05" type="plane" material="grid"
+          friction="1.6 0.01 0.001" condim="4"/>
+
+    <!-- first wall, gap at y ~ +1.75 -->
+    <body name="wall_a_lo" pos="5.0 -2.5 0.35"><geom type="box" size="0.14 3.5 0.35" material="wall"/></body>
+    <body name="wall_a_hi" pos="5.0  4.25 0.35"><geom type="box" size="0.14 1.75 0.35" material="wall"/></body>
+
+    <!-- second wall, gap offset the other way at y ~ -1.75 -->
+    <body name="wall_b_lo" pos="10.0 -4.25 0.35"><geom type="box" size="0.14 1.75 0.35" material="wall"/></body>
+    <body name="wall_b_hi" pos="10.0  2.5 0.35"><geom type="box" size="0.14 3.5 0.35" material="wall"/></body>
+
+    <!-- clutter, tall enough to occlude as well as block -->
+    <body name="block_a" pos="2.6 1.4 0.45"><geom type="box" size="0.3 0.3 0.45" material="block"/></body>
+    <body name="block_b" pos="7.6 -0.9 0.5"><geom type="cylinder" size="0.28 0.5" material="block"/></body>
+    <body name="block_c" pos="12.3 1.8 0.4"><geom type="box" size="0.35 0.35 0.4" material="block"/></body>
+    <body name="post_a"  pos="13.5 -2.2 0.6"><geom type="cylinder" size="0.14 0.6" material="post"/></body>
+    <body name="post_b"  pos="8.9 3.6 0.6"><geom type="cylinder" size="0.14 0.6" material="post"/></body>
+  </worldbody>
+</mujoco>

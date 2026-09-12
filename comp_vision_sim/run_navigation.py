@@ -42,6 +42,12 @@ TRUE_MARKERS = {"target": [(6.0, 0.0)],
                 "pillar": [(1.5, -1.3), (4.7, 3.1), (5.2, -2.6)]}
 
 
+def scene_has_truth(scene_path) -> bool:
+    """Ground truth above describes one specific course; scoring against it
+    in any other scene would invent errors out of nothing."""
+    return "obstacle_course" in str(scene_path)
+
+
 def parse_args(argv=None):
     p = argparse.ArgumentParser(description=__doc__,
                                 formatter_class=argparse.RawDescriptionHelpFormatter)
@@ -55,9 +61,17 @@ def parse_args(argv=None):
     p.add_argument("--seed-scan", type=float, default=1.0,
                    help="turns to spin while mapping before planning")
     p.add_argument("--detector", default="colour",
-                   choices=["colour", "yolo", "llm"],
-                   help="colour thresholding, a YOLO net trained by train_yolo.py, "
-                        "or the local LLM (llama-server) scene reasoner")
+                   choices=["colour", "yolo", "geometric", "llm"],
+                   help="colour thresholding, a YOLO net trained by "
+                        "train_yolo.py, 'geometric' -- colour-free clustering "
+                        "that needs no palette and so works in an unfamiliar "
+                        "scene -- or 'llm', the local LLM (llama-server) scene "
+                        "reasoner")
+    p.add_argument("--goal", default=None, metavar="X,Y",
+                   help="drive to this world coordinate instead of looking for "
+                        "a coloured target; needs no detector palette")
+    p.add_argument("--camera", default=None,
+                   help="camera to perceive through (default: auto-detected)")
     p.add_argument("--weights", default=None,
                    help="YOLO weights (default: runs/bracketbot_yolo/weights/best.pt)")
     p.add_argument("--conf", type=float, default=0.35, help="YOLO confidence")
@@ -75,13 +89,24 @@ def parse_args(argv=None):
     return p.parse_args(argv)
 
 
-def build_detector(args):
+def build_detector(args, info=None):
     if args.detector == "colour":
         return None
+    if args.detector == "geometric":
+        from vision_sim.perception import GeometricDetector
+        det = GeometricDetector(
+            floor_z=info.floor_z if info else 0.0,
+            self_radius=(info.robot_radius + 0.25) if info else 0.55)
+        print("detector: geometric (colour-free clustering)")
+        return det
     if args.detector == "yolo":
         from vision_sim.yolo_detector import YoloDetector
-        weights = args.weights or (HERE / "runs" / "bracketbot_yolo" /
-                                   "weights" / "best.pt")
+        # A fresh training run wins over the checked-in net, so retraining takes
+        # effect without passing --weights; models/ is the fallback that makes a
+        # clean clone work at all.
+        trained = HERE / "runs" / "bracketbot_yolo" / "weights" / "best.pt"
+        shipped = HERE / "models" / "bracketbot_yolo.pt"
+        weights = args.weights or (trained if trained.exists() else shipped)
         det = YoloDetector(weights, conf=args.conf)
         print(f"detector: YOLO {weights} classes={list(det.names.values())}")
         return det
@@ -151,7 +176,7 @@ def score_detections(detections):
     return rows
 
 
-def figure(bot, nav, track, path_out, elapsed):
+def figure(bot, nav, track, path_out, elapsed, truth=True):
     import matplotlib
     matplotlib.use("Agg")
     import matplotlib.pyplot as plt
@@ -195,10 +220,11 @@ def figure(bot, nav, track, path_out, elapsed):
     shade[occ] = (0.95, 0.62, 0.15, 1.0)                   # occupied
     ax.imshow(np.transpose(shade, (1, 0, 2)), origin="lower", extent=ext)
 
-    for label, pts in TRUE_MARKERS.items():
-        for i, (x, y) in enumerate(pts):
-            ax.plot(x, y, "x", color="#6ef0a0", ms=9, mew=2,
-                    label="ground truth" if (label == "target" and i == 0) else None)
+    if truth:
+        for label, pts in TRUE_MARKERS.items():
+            for i, (x, y) in enumerate(pts):
+                ax.plot(x, y, "x", color="#6ef0a0", ms=9, mew=2,
+                        label="ground truth" if (label == "target" and i == 0) else None)
 
     for d in dets:
         ax.add_patch(Circle(d.position[:2], 0.18, fill=False, lw=2,
@@ -217,8 +243,10 @@ def figure(bot, nav, track, path_out, elapsed):
                 label="detected goal")
     ax.plot(*bot.position[:2], "o", color="w", ms=9, label="robot")
 
-    ax.set_xlim(-2.5, 8.0)
-    ax.set_ylim(-4.5, 5.0)
+    # Frame the grid the run actually used, not the original course's extent,
+    # or a larger scene silently draws its track off the edge of the axes.
+    ax.set_xlim(ext[0], ext[1])
+    ax.set_ylim(ext[2], ext[3])
     ax.set_aspect("equal")
     ax.set_title("occupancy grid from depth + A* plan", color="w", fontsize=11)
     ax.tick_params(colors="#99a")
@@ -229,13 +257,15 @@ def figure(bot, nav, track, path_out, elapsed):
     for t in leg.get_texts():
         t.set_color("#ccd")
 
-    scored = score_detections(dets)
+    scored = score_detections(dets) if truth else []
     lines = [f"state: {nav.state}    sim {bot.time:.1f}s / wall {elapsed:.1f}s",
              f"occupied cells {int(occ.sum())}   observed {int(grid.seen.sum())}"
              f" / {grid.size[0] * grid.size[1]}"]
-    if nav.goal_xy is not None:
+    if nav.goal_xy is not None and truth:
         err = np.linalg.norm(nav.goal_xy - np.array(TRUE_MARKERS["target"][0]))
         lines.append(f"goal estimate error {err:.2f} m")
+    elif nav.goal_xy is not None:
+        lines.append(f"goal ({nav.goal_xy[0]:.2f}, {nav.goal_xy[1]:.2f})")
     if scored:
         worst = max(e for _, e in scored)
         lines.append(f"{len(scored)} detections, worst position error {worst:.2f} m")
@@ -257,12 +287,23 @@ def main():
     from bracketbot_sim.robot import BracketBot
     from vision_sim.navigation import VisualNavigator
 
+    from vision_sim.scene import SceneInfo
+
     bot = BracketBot(xml=args.scene)
     bot.balance.enable(bot.state)
-    nav = VisualNavigator(scan_turns=args.seed_scan, verbose=True,
-                          detector=build_detector(args))
+
+    info = SceneInfo.from_model(bot.model, bot.data, camera=args.camera)
+    goal = None
+    if args.goal:
+        goal = [float(v) for v in args.goal.replace(" ", "").split(",")[:2]]
+    nav = VisualNavigator.for_bot(bot, goal=goal, camera=args.camera,
+                                  scan_turns=args.seed_scan, verbose=True,
+                                  detector=build_detector(args, info))
     print("cameras:", ", ".join(bot.camera_names))
-    print(f"scene: {args.scene}   goal: red column at {TRUE_MARKERS['target'][0]}")
+    print(info.describe())
+    print(f"scene: {args.scene}")
+    print("goal: " + (f"coordinate {tuple(goal)}" if goal else
+                      f"whatever the detector labels {nav.goal_label!r}"))
 
     track = []
     wall = time.time()
@@ -299,21 +340,25 @@ def main():
 
     elapsed = time.time() - wall
     track = np.array(track)
-    goal_truth = np.array(TRUE_MARKERS["target"][0])
+    truth = scene_has_truth(args.scene)
     print(f"\nstate={nav.state} fallen={bot.fallen} "
           f"sim={bot.time:.1f}s wall={elapsed:.1f}s")
-    print(f"final position {np.round(bot.position[:2], 2)}  "
-          f"{np.linalg.norm(bot.position[:2] - goal_truth):.2f} m from the column")
-    print(f"best frame t={nav.best_time:.1f}s, {len(nav.best_detections)} objects:")
-    for d, err in score_detections(nav.best_detections):
-        print(f"  {d}  position error {err:.2f} m")
+    print(f"final position {np.round(bot.position[:2], 2)}")
+    if nav.goal_xy is not None:
+        print(f"  {np.linalg.norm(bot.position[:2] - nav.goal_xy):.2f} m from the goal")
+    print(f"best frame t={nav.best_time:.1f}s, "
+          f"{len(nav.best_detections)} objects"
+          f"{':' if truth else ' (no ground truth for this scene)'}")
+    if truth:
+        for d, err in score_detections(nav.best_detections):
+            print(f"  {d}  position error {err:.2f} m")
     if hasattr(nav.detector, "truncated"):
         det = nav.detector
         print(f"llm: {det.queries} queries, {det.errors} errors, "
               f"{det.truncated} truncated answers")
 
     if nav.obs is not None:
-        figure(bot, nav, track, args.out, elapsed)
+        figure(bot, nav, track, args.out, elapsed, truth=truth)
     bot.close()
 
 
