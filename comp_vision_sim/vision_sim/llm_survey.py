@@ -47,8 +47,9 @@ def _wrap(a):
 
 SURVEY_PROMPT = """You are the visual cortex of a balancing two-wheeled robot on an indoor obstacle course.
 The robot stood still and turned in place, taking {n} photos, one per heading. Each photo below is
-preceded by a label giving the robot's WORLD position (x, y in metres) and the camera's WORLD heading
-in degrees (0 = +x axis, counter-clockwise positive, so 90 = +y). Every photo is {width} px wide and
+preceded by its own label: the robot's WORLD position (x, y in metres), the WORLD heading that photo
+faces, its angle from photo 0, and the world headings seen along its left and right edges. Headings are
+in degrees, 0 = +x axis, counter-clockwise positive, so 90 = +y. Every photo is {width} px wide and
 {height} px tall (horizontal_px: 0 = left edge; vertical_px: 0 = top edge). Within a photo, things to
 the LEFT of centre are at a LARGER world heading than the camera's, things to the RIGHT at a smaller one.
 
@@ -72,9 +73,37 @@ class SurveyShot:
     robot_xy: np.ndarray        # (2,) world position of the robot
     obs: Observation            # the registered RGB-D frame
 
-    def label(self) -> str:
-        return (f"Photo {self.index}: robot at ({self.robot_xy[0]:.2f}, {self.robot_xy[1]:.2f}), "
-                f"camera heading {np.degrees(self.heading) % 360:.0f} deg")
+    def label(self, reference_heading: float | None = None) -> str:
+        """The text sent immediately before this photo: where it was taken from
+        and exactly which directions it shows.
+
+        Each photo carries its OWN direction -- its world heading, its angle
+        from photo 0, and the world headings at its left and right edges -- so
+        the model can place anything it sees in a photo without relying on the
+        photos' order or on the other labels.
+        """
+        heading = np.degrees(self.heading) % 360
+        parts = [f"Photo {self.index}: robot at ({self.robot_xy[0]:.2f}, {self.robot_xy[1]:.2f})",
+                 f"this photo faces world heading {heading:.0f} deg"]
+        if reference_heading is not None:
+            rel = np.degrees(_wrap(self.heading - reference_heading)) % 360
+            parts.append("it is the reference direction for the other photos"
+                         if self.index == 0 or rel < 0.5 else
+                         f"that is {rel:.0f} deg counter-clockwise from photo 0")
+        span = self.view_span()
+        if span is not None:
+            left, right = (np.degrees(a) % 360 for a in span)
+            parts.append(f"its left edge looks along {left:.0f} deg and its right edge "
+                         f"along {right:.0f} deg")
+        return "; ".join(parts)
+
+    def view_span(self) -> tuple[float, float] | None:
+        """World headings (rad) seen at this photo's left and right edges."""
+        if self.obs is None:
+            return None
+        intr = self.obs.intrinsics
+        half = float(np.arctan2(intr.cx, intr.fx))
+        return float(_wrap(self.heading + half)), float(_wrap(self.heading - half))
 
 
 @dataclass
@@ -135,7 +164,7 @@ class LlmSurvey:
             raise ValueError("no shots to survey")
         try:
             content, dt = self.client.ask_images([s.obs.rgb for s in shots],
-                                                 [s.label() for s in shots],
+                                                 [s.label(shots[0].heading) for s in shots],
                                                  self.prompt(shots))
         except Exception as e:  # server down, timeout, HTTP error
             self.errors += 1

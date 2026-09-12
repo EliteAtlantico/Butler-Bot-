@@ -119,12 +119,64 @@ class TestSurveyPlan(unittest.TestCase):
 
     def test_label_carries_position_and_heading(self):
         shot = SurveyShot(3, np.radians(135), np.array([1.25, -2.5]), obs=None)
-        self.assertEqual(shot.label(), "Photo 3: robot at (1.25, -2.50), camera heading 135 deg")
+        self.assertEqual(shot.label(),
+                         "Photo 3: robot at (1.25, -2.50); this photo faces world heading 135 deg")
         neg = SurveyShot(5, np.radians(-90), np.array([0.0, 0.0]), obs=None)
-        self.assertIn("camera heading 270 deg", neg.label())
+        self.assertIn("faces world heading 270 deg", neg.label())
+
+    def test_label_states_the_angle_from_photo_0(self):
+        ref = np.radians(20)
+        first = SurveyShot(0, ref, np.array([0.0, 0.0]), obs=None)
+        third = SurveyShot(3, ref + np.radians(135), np.array([0.0, 0.0]), obs=None)
+        wrap = SurveyShot(7, ref - np.radians(45), np.array([0.0, 0.0]), obs=None)
+        self.assertIn("reference direction", first.label(ref))
+        self.assertIn("135 deg counter-clockwise from photo 0", third.label(ref))
+        self.assertIn("315 deg counter-clockwise from photo 0", wrap.label(ref))
 
 
 # ================================================================== interpret
+class TestSurveyLabelsWithCamera(unittest.TestCase):
+    """Labels on real photos: each states its own view, and the edge headings
+    it states agree with the camera geometry used to range the goal."""
+
+    @classmethod
+    def setUpClass(cls):
+        cls.bot = make_bot()
+        cls.shots = shots_from(cls.bot, 1.0, -0.5, 0.7)
+
+    @classmethod
+    def tearDownClass(cls):
+        cls.bot.close()
+
+    def test_every_label_describes_its_own_photo(self):
+        for s in self.shots:
+            label = s.label(self.shots[0].heading)
+            with self.subTest(photo=s.index):
+                self.assertTrue(label.startswith(f"Photo {s.index}:"))
+                self.assertIn(f"faces world heading {np.degrees(s.heading) % 360:.0f} deg", label)
+                self.assertIn("left edge looks along", label)
+                self.assertIn("robot at (1.00, -0.50)", label)
+
+    def test_edge_headings_match_the_pixel_geometry(self):
+        for s in self.shots:
+            left, right = s.view_span()
+            w = s.obs.intrinsics.width
+            with self.subTest(photo=s.index):
+                self.assertLess(ang(left, pixel_heading(s, 0)), np.radians(0.5))
+                self.assertLess(ang(right, pixel_heading(s, w)), np.radians(0.5))
+                # left edge is counter-clockwise of centre, right edge clockwise
+                self.assertGreater(float(_wrap(left - s.heading)), 0)
+                self.assertLess(float(_wrap(right - s.heading)), 0)
+
+    def test_neighbouring_photos_overlap(self):
+        # 8 photos 45 deg apart with a ~73 deg view: nothing falls between photos.
+        for a, b in zip(self.shots, self.shots[1:] + self.shots[:1]):
+            a_left = a.view_span()[0]
+            b_right = b.view_span()[1]
+            self.assertGreater(float(_wrap(a_left - b_right)), 0,
+                               f"gap between photo {a.index} and {b.index}")
+
+
 class TestSurveyInterpret(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
@@ -223,10 +275,14 @@ class TestSurveyRequest(unittest.TestCase):
         texts = [p["text"] for p in parts if p["type"] == "text"]
         images = [p["image_url"]["url"] for p in parts if p["type"] == "image_url"]
         self.assertEqual(len(images), 8)
-        self.assertEqual(texts[1:], [s.label() for s in self.shots])
-        # every label comes immediately before its own photo
+        self.assertEqual(texts[1:], [s.label(self.shots[0].heading) for s in self.shots])
+        # every label comes immediately before its own photo, and names that
+        # photo's own direction
         for i, s in enumerate(self.shots):
-            self.assertEqual(parts[1 + 2 * i]["text"], s.label())
+            label = parts[1 + 2 * i]["text"]
+            self.assertEqual(label, s.label(self.shots[0].heading))
+            self.assertIn(f"faces world heading {np.degrees(s.heading) % 360:.0f} deg", label)
+            self.assertIn("left edge looks along", label)
             self.assertEqual(parts[2 + 2 * i]["type"], "image_url")
         self.assertIn("8 photos", texts[0])
         self.assertIn("320 px wide", texts[0])
