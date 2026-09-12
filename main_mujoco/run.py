@@ -26,10 +26,12 @@ def parse_args():
                                 formatter_class=argparse.RawDescriptionHelpFormatter)
     p.add_argument("--algorithm", "-a", default="stand",
                    choices=["stand", "square", "avoid", "waypoints", "drive",
-                            "spin"],
+                            "spin", "pick"],
                    help="movement algorithm to run (default: stand)")
-    p.add_argument("--scene", default="scene_dynamic.xml",
-                   help="scene_dynamic.xml (with props) or scene_flat.xml")
+    p.add_argument("--scene", default=None,
+                   help="scene_dynamic.xml (props), scene_flat.xml (bare floor), "
+                        "or scene_table.xml (obstacle + table + cube). "
+                        "Defaults to scene_table.xml for --algorithm pick.")
     p.add_argument("--headless", action="store_true", help="no viewer window")
     p.add_argument("--duration", "-d", type=float, default=None,
                    help="seconds to run (headless default 30, viewer unlimited)")
@@ -43,8 +45,14 @@ def parse_args():
     return p.parse_args()
 
 
-def make_algorithm(name):
+DEFAULT_SCENE = {"pick": "scene_table.xml"}
+
+
+def make_algorithm(name, bot=None):
     from bracketbot_sim import algorithms as alg
+    if name == "pick":
+        from bracketbot_sim.manipulation import PickCube
+        return PickCube(bot)
     if name == "stand":
         return alg.Stand()
     if name == "square":
@@ -95,17 +103,21 @@ def montage(bot, path, width=320, height=240):
 
 def main():
     args = parse_args()
-    # The offscreen camera renders need a GL backend. egl works headless on
-    # Linux; Windows has no egl backend, so headless renders there ride the
-    # same wgl context a viewer would use.
-    if args.headless or args.cameras:
-        os.environ["MUJOCO_GL"] = "wgl" if os.name == "nt" else "egl"
+    # Offscreen camera renders need a GL backend. On Linux they always go
+    # through EGL, viewer or not: the passive viewer opens its own GLFW window
+    # independently of MUJOCO_GL, and letting the offscreen renderers share that
+    # windowed context segfaults the process the first time an algorithm asks
+    # for a depth frame. Windows has no egl backend, so headless renders there
+    # ride the same wgl context a viewer would use.
+    if os.name == "nt":
+        os.environ["MUJOCO_GL"] = "wgl" if (args.headless or args.cameras) else "glfw"
     else:
-        os.environ["MUJOCO_GL"] = "glfw"
+        os.environ["MUJOCO_GL"] = "egl"
 
     from bracketbot_sim.robot import BracketBot
 
-    bot = BracketBot(xml=args.scene)
+    scene = args.scene or DEFAULT_SCENE.get(args.algorithm, "scene_dynamic.xml")
+    bot = BracketBot(xml=scene)
     print(bot.plant.describe())
     print("cameras:", ", ".join(bot.camera_names))
 
@@ -116,13 +128,17 @@ def main():
 
     if not args.no_balance:
         bot.balance.enable(bot.state)
-    algorithm = make_algorithm(args.algorithm)
-    print(f"algorithm: {args.algorithm}")
+    # PickCube reads the scene's cube and table when it is built, so the robot
+    # has to exist first
+    algorithm = make_algorithm(args.algorithm, bot)
+    print(f"scene: {scene}   algorithm: {args.algorithm}")
 
     if args.headless:
-        duration = args.duration or 30.0
+        duration = args.duration or (120.0 if args.algorithm == "pick" else 30.0)
         while bot.time < duration and not bot.fallen:
             bot.step(0.1, controller=algorithm)
+            if getattr(algorithm, "done", False):
+                break
         import numpy as np
         print(f"t={bot.time:.1f}s  pos={np.round(bot.position[:2], 3)}  "
               f"pitch={np.rad2deg(bot.pitch):+.2f}deg  fallen={bot.fallen}")
@@ -137,12 +153,9 @@ def main():
         # rendered state without touching the controllers. We wire the keys
         # ourselves so they act on the real simulation.
         paused = {"v": False}
+        current = {"algorithm": algorithm}
 
         def on_key(key):
-            # `algorithm` is rebound here, so it has to be declared nonlocal --
-            # without it the assignment below makes a local that dies with the
-            # callback and the step loop keeps the stale, already-run object.
-            nonlocal algorithm
             # GLFW key codes (press only; the passive bridge delivers repeats,
             # so guard against them).
             if key in (glfw.KEY_SPACE, glfw.KEY_P):
@@ -151,7 +164,10 @@ def main():
                       f"  t={bot.time:.2f}s  pos={bot.position[:2].round(2)}")
             elif key == glfw.KEY_R:
                 bot.reset()           # re-anchors odometry + LQR refs
-                algorithm = make_algorithm(args.algorithm)  # fresh clock
+                # Rebind through the holder: assigning `algorithm` here would
+                # only create a local, and the loop would keep running the
+                # stale instance with its old clock and phase state.
+                current["algorithm"] = make_algorithm(args.algorithm, bot)
                 print("reset  t=0.00s")
 
         with mujoco.viewer.launch_passive(bot.model, bot.data,
@@ -165,7 +181,7 @@ def main():
                     continue
                 if args.duration and bot.time > args.duration:
                     break
-                bot.step(0.02, controller=algorithm)
+                bot.step(0.02, controller=current["algorithm"])
                 viewer.sync()
                 lag = bot.time / max(args.speed, 1e-6) - (time.time() - start)
                 if lag > 0:

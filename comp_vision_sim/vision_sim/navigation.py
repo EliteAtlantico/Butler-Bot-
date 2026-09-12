@@ -71,6 +71,7 @@ class VisualNavigator:
         self._last_yaw = None
         self._next_sense = 0.0
         self._next_plan = 0.0
+        self._last_t = None
         self._wp = 0
         self._cmd = (0.0, 0.0)
         self._plan_failures = 0
@@ -177,10 +178,16 @@ class VisualNavigator:
         # clock, so t jumps backwards below the scheduled times and this
         # navigator would never sense or replan again -- the same trap the
         # ObstacleAvoider hit. Re-seed both clocks when time runs backwards.
-        if t < self._next_sense:
+        #
+        # "Runs backwards" means earlier than the PREVIOUS tick. Testing
+        # `t < self._next_*` is true whenever the next event is in the future,
+        # which is almost every step: it sensed on every physics step and
+        # replanned A* far more often than plan_period, making runs ~100x
+        # slower than real time.
+        if self._last_t is not None and t < self._last_t:
             self._next_sense = t
-        if t < self._next_plan:
             self._next_plan = t
+        self._last_t = t
 
         if t >= self._next_sense:
             self._next_sense = t + self.sense_period
