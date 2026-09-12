@@ -1,0 +1,5 @@
+-r main_mujoco/requirements.txt
+pytest==9.1.1
+pytest-cov==7.1.0
+matplotlib==3.11.2
+ultralytics==8.4.150

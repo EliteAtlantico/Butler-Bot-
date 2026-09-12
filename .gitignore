@@ -1,5 +1,6 @@
 # Python
 .venv/
+.venv-tests/
 venv/
 __pycache__/
 *.py[cod]
@@ -18,3 +19,6 @@ yolov8n.pt
 vision_nav.png
 rgbd_frame_*.png
 tour_*.png
+.coverage
+htmlcov/
+.pytest_cache/
