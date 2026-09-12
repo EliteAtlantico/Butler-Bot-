@@ -119,6 +119,7 @@ class ObstacleAvoider:
         self.width, self.height, self.band = width, height, band
         self.period = period
         self._next = 0.0
+        self._last_t = None
         self._cmd = (0.0, 0.0)
         self.last_depth = None
 
@@ -145,8 +146,14 @@ class ObstacleAvoider:
         # clock, so t can jump backwards below _next. Re-seed the perception
         # clock in that case, or we'd sit on the last command with the depth
         # camera switched off and drive straight into the next obstacle.
-        if t < self._next:
+        #
+        # Detect the reset by comparing against the PREVIOUS tick. Testing
+        # `t < self._next` instead is true whenever a sense is scheduled in the
+        # future -- nearly every step -- so it re-seeded constantly and the
+        # avoider rendered depth on every physics step (500/s, not 10/s).
+        if self._last_t is not None and t < self._last_t:
             self._next = t
+        self._last_t = t
         if t >= self._next:
             self._next = t + self.period
             d_left, d_right = self.sense(bot)
@@ -320,6 +327,7 @@ class NavigateTo:
         self._goal_blocked = False
         self.period = period
         self._next = 0.0
+        self._last_t = None
         self._steer = 0.0
         self._ahead = np.inf
         self.done = False
@@ -382,6 +390,15 @@ class NavigateTo:
         return self.goal - d * self.entry_offset
 
     def __call__(self, bot, t):
+        # A sim reset zeros the clock. Without this, t sits below the scheduled
+        # replan time and the stuck timer's start, so the robot would steer on
+        # a stale plan and never trigger recovery. Compare against the previous
+        # tick, not against _next -- the latter is true almost every step.
+        if self._last_t is not None and t < self._last_t:
+            self._next = t
+            self._stuck_since = None
+        self._last_t = t
+
         here = bot.position[:2]
         heading = np.array([np.cos(bot.yaw), np.sin(bot.yaw)])
 
