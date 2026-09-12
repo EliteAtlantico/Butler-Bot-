@@ -117,21 +117,43 @@ def _robot_extent(model, data, robot: np.ndarray, floor_z: float):
     if not len(ids):
         return 0.3, 1.0
     root = data.xpos[_robot_root(model)][:2]
-    d = np.linalg.norm(data.geom_xpos[ids][:, :2] - root, axis=1) + model.geom_rbound[ids]
-    top = float((data.geom_xpos[ids][:, 2] + model.geom_rbound[ids]).max() - floor_z)
+    half = np.array([_geom_halfextent(model, data, g) for g in ids])
+    d = np.linalg.norm(data.geom_xpos[ids][:, :2] - root, axis=1) + half[:, :2].max(1)
+    top = float((data.geom_xpos[ids][:, 2] + half[:, 2]).max() - floor_z)
     # A 95th percentile rather than the max: one stray arm geom sticking out
     # should not inflate the footprint the planner has to keep clear.
     return float(np.percentile(d, 95)), top
 
 
+def _geom_halfextent(model, data, g) -> np.ndarray:
+    """World-axis half-extent of one geom.
+
+    Deliberately not geom_rbound: that is a bounding SPHERE, so a 12 m wall
+    0.2 m thick reports a 6 m radius in every direction and inflates the
+    scene bounds into empty space on all sides. Rotating the local box
+    half-sizes by |R| gives the real axis-aligned extent instead.
+    """
+    h = model.geom_aabb[g, 3:6]
+    if not np.any(h):
+        h = np.full(3, float(model.geom_rbound[g]))
+    R = data.geom_xmat[g].reshape(3, 3)
+    return np.abs(R) @ h
+
+
 def _scenery_bounds(model, data, static: np.ndarray, floor_z: float):
     """XY extent of static geometry that stands above the floor."""
     ids = [g for g in np.where(static)[0]
-           if model.geom_type[g] != mujoco.mjtGeom.mjGEOM_PLANE
-           and data.geom_xpos[g][2] + model.geom_rbound[g] > floor_z + 0.05]
-    if not ids:
+           if model.geom_type[g] != mujoco.mjtGeom.mjGEOM_PLANE]
+    lo, hi = [], []
+    for g in ids:
+        h = _geom_halfextent(model, data, g)
+        c = data.geom_xpos[g]
+        if c[2] + h[2] <= floor_z + 0.05:       # flat on the floor, not an obstacle
+            continue
+        lo.append(c[:2] - h[:2])
+        hi.append(c[:2] + h[:2])
+    if not lo:
         return (-1.0, -1.0, 1.0, 1.0)
-    pos = data.geom_xpos[ids][:, :2]
-    r = model.geom_rbound[ids][:, None]
-    return (float((pos - r)[:, 0].min()), float((pos - r)[:, 1].min()),
-            float((pos + r)[:, 0].max()), float((pos + r)[:, 1].max()))
+    lo, hi = np.array(lo), np.array(hi)
+    return (float(lo[:, 0].min()), float(lo[:, 1].min()),
+            float(hi[:, 0].max()), float(hi[:, 1].max()))
