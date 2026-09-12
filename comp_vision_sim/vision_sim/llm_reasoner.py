@@ -72,27 +72,36 @@ If you are not confident the red goal is present, set goal_found=false and null 
 
 
 def _extract_json(text: str):
-    """First JSON object in the text, tolerating fences and trailing chatter."""
+    """First JSON object in the text, tolerating fences and surrounding chatter.
+
+    Uses the real JSON decoder from each candidate `{` rather than counting
+    braces: a brace counter ends early on a `}` inside a string value (e.g. a
+    scene description that mentions one), and then the whole query is lost.
+    """
     if text is None:
         raise ValueError("empty response")
     t = text.strip()
     fence = re.search(r"```(?:json)?\s*(\{.*?\})\s*```", t, re.DOTALL)
     if fence:
-        return json.loads(fence.group(1))
+        try:
+            obj = json.loads(fence.group(1))
+            if isinstance(obj, dict):
+                return obj
+        except json.JSONDecodeError:
+            pass                     # fall through to the scan below
+    decoder = json.JSONDecoder()
     start = t.find("{")
     if start < 0:
         raise ValueError(f"no JSON object in response: {t[:120]!r}")
-    # Walk to the matching close brace so trailing prose cannot break the load.
-    depth = 0
-    for i in range(start, len(t)):
-        c = t[i]
-        if c == "{":
-            depth += 1
-        elif c == "}":
-            depth -= 1
-            if depth == 0:
-                return json.loads(t[start:i + 1])
-    raise ValueError("unbalanced JSON in response")
+    while start >= 0:
+        try:
+            obj, _ = decoder.raw_decode(t, start)
+            if isinstance(obj, dict):
+                return obj
+        except json.JSONDecodeError:
+            pass
+        start = t.find("{", start + 1)
+    raise ValueError(f"no decodable JSON object in response: {t[:120]!r}")
 
 
 def _to_int(x):
@@ -107,6 +116,27 @@ def _to_float(x):
         return float(x)
     except (TypeError, ValueError):
         return None
+
+
+_TRUE = {"true", "yes", "y", "1"}
+_FALSE = {"false", "no", "n", "0", "null", "none", ""}
+
+
+def _to_bool(x) -> bool:
+    """JSON-ish truth. A model that writes "false" as a string must not be
+    read as True, which is what plain truthiness does to any non-empty str."""
+    if isinstance(x, bool):
+        return x
+    if x is None:
+        return False
+    if isinstance(x, (int, float)):
+        return x != 0
+    v = str(x).strip().lower()
+    if v in _TRUE:
+        return True
+    if v in _FALSE:
+        return False
+    return False
 
 
 # --------------------------------------------------------------------------- client
@@ -124,6 +154,7 @@ class LLMClient:
         self.temperature = temperature
         self.timeout = timeout
         self.verbose = verbose
+        self.last_finish_reason: str | None = None
 
     def ask_image(self, rgb: np.ndarray, prompt: str) -> tuple[str, float]:
         """Send one image + prompt; return (content_text, latency_seconds)."""
@@ -151,9 +182,15 @@ class LLMClient:
         dt = time.time() - t0
         if r.status_code != 200:
             raise RuntimeError(f"LLM HTTP {r.status_code}: {r.text[:200]}")
-        content = r.json()["choices"][0]["message"]["content"]
+        data = r.json()
+        choice = data["choices"][0]
+        # "length" means the token cap cut the answer off -- the JSON is
+        # incomplete and will fail to parse. Recorded so the caller can count it.
+        self.last_finish_reason = choice.get("finish_reason")
+        content = choice["message"]["content"]
         if self.verbose:
-            print(f"    [llm] {dt:.1f}s  usage={r.json().get('usage', {}).get('completion_tokens', '?')} tok")
+            print(f"    [llm] {dt:.1f}s  usage={data.get('usage', {}).get('completion_tokens', '?')} tok"
+                  f"  finish={self.last_finish_reason}")
         return content, dt
 
 
@@ -192,16 +229,19 @@ class LlmGoalDetector:
         self.last_latency: float | None = None
         self.queries = 0
         self.errors = 0
+        self.truncated = 0
 
     # --------------------------------------------------------------- cadence
     def _due(self, t: float | None) -> bool:
-        if t is None:
-            self._clock = "wall"
-            now = time.monotonic()
-        else:
-            self._clock = "sim"
-            now = float(t)
-        if self._last_query is None:
+        clock = "wall" if t is None else "sim"
+        now = time.monotonic() if t is None else float(t)
+        if self._last_query is None or clock != self._clock:
+            self._clock = clock
+            return True
+        if now < self._last_query:
+            # The clock ran backwards: a sim reset (viewer R, BracketBot.reset)
+            # zeroes t. Without this the detector stays silent until t climbs
+            # back past the pre-reset query time -- tens of seconds blind.
             return True
         return (now - self._last_query) >= self.query_period
 
@@ -211,11 +251,18 @@ class LlmGoalDetector:
         if not self._due(t):
             return self._cache
 
+        # Stamp the ATTEMPT, not the success. Stamping only on success means a
+        # down server is retried on every sense tick, and each retry blocks the
+        # whole sim loop for up to `timeout` seconds.
+        self._last_query = t if t is not None else time.monotonic()
+
         prompt = PROMPT_TEMPLATE.format(width=obs.intrinsics.width,
                                         height=obs.intrinsics.height)
         det = None
         try:
             content, dt = self.client.ask_image(obs.rgb, prompt)
+            if getattr(self.client, "last_finish_reason", None) == "length":
+                self.truncated += 1
             reason = _extract_json(content)
             det = self._to_detection(obs, reason, robot_yaw)
             self.queries += 1
@@ -227,7 +274,6 @@ class LlmGoalDetector:
             return self._cache
 
         self.last_reasoning = reason
-        self._last_query = t if t is not None else time.monotonic()
         self._cache = [det] if det is not None else []
         if self.verbose:
             scene = str(reason.get("scene", ""))
@@ -244,7 +290,7 @@ class LlmGoalDetector:
 
     # -------------------------------------------------------------- pixel->world
     def _to_detection(self, obs, reason, robot_yaw):
-        if not reason.get("goal_found"):
+        if not _to_bool(reason.get("goal_found")):
             if self.verbose:
                 print(f"    [llm] goal not found: {reason.get('scene', '')!r}")
             return None
@@ -313,4 +359,4 @@ class LlmGoalDetector:
 
     def __repr__(self):
         return (f"<LlmGoalDetector {self.client.model} every={self.query_period}s "
-                f"queries={self.queries} errors={self.errors}>")
+                f"queries={self.queries} errors={self.errors} truncated={self.truncated}>")

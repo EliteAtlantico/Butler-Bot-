@@ -42,7 +42,7 @@ TRUE_MARKERS = {"target": [(6.0, 0.0)],
                 "pillar": [(1.5, -1.3), (4.7, 3.1), (5.2, -2.6)]}
 
 
-def parse_args():
+def parse_args(argv=None):
     p = argparse.ArgumentParser(description=__doc__,
                                 formatter_class=argparse.RawDescriptionHelpFormatter)
     p.add_argument("--scene", default=str(HERE / "obstacle_course.xml"))
@@ -69,7 +69,10 @@ def parse_args():
                    help="sim seconds between LLM scene queries")
     p.add_argument("--llm-conf", type=float, default=0.40,
                    help="min goal confidence to accept a reasoned location")
-    return p.parse_args()
+    p.add_argument("--llm-max-tokens", type=int, default=2048,
+                   help="completion token cap per LLM query (1024 truncated "
+                        "answers on the 27B model)")
+    return p.parse_args(argv)
 
 
 def build_detector(args):
@@ -85,7 +88,8 @@ def build_detector(args):
     from vision_sim.llm_reasoner import LlmGoalDetector
     det = LlmGoalDetector(base_url=args.llm_url, model=args.llm_model,
                           query_period=args.llm_period,
-                          min_confidence=args.llm_conf, verbose=True)
+                          min_confidence=args.llm_conf,
+                          max_tokens=args.llm_max_tokens, verbose=True)
     print(f"detector: local LLM {args.llm_url} model={args.llm_model} "
           f"query every {args.llm_period:g} sim s")
     return det
@@ -303,6 +307,10 @@ def main():
     print(f"best frame t={nav.best_time:.1f}s, {len(nav.best_detections)} objects:")
     for d, err in score_detections(nav.best_detections):
         print(f"  {d}  position error {err:.2f} m")
+    if hasattr(nav.detector, "truncated"):
+        det = nav.detector
+        print(f"llm: {det.queries} queries, {det.errors} errors, "
+              f"{det.truncated} truncated answers")
 
     if nav.obs is not None:
         figure(bot, nav, track, args.out, elapsed)
