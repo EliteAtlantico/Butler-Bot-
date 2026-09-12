@@ -17,3 +17,4 @@ yolov8n.pt
 # Run outputs
 vision_nav.png
 rgbd_frame_*.png
+tour_*.png
