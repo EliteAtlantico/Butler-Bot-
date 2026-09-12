@@ -173,6 +173,15 @@ class VisualNavigator:
 
     # ----------------------------------------------------------------- tick
     def __call__(self, bot, t):
+        # A sim reset (the viewer's R key, or BracketBot.reset) zeros the
+        # clock, so t jumps backwards below the scheduled times and this
+        # navigator would never sense or replan again -- the same trap the
+        # ObstacleAvoider hit. Re-seed both clocks when time runs backwards.
+        if t < self._next_sense:
+            self._next_sense = t
+        if t < self._next_plan:
+            self._next_plan = t
+
         if t >= self._next_sense:
             self._next_sense = t + self.sense_period
             self.sense(bot, t)
