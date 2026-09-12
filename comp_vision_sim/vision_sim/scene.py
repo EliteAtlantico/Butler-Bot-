@@ -37,6 +37,20 @@ class SceneInfo:
         x0, y0, x1, y1 = self.bounds
         return x1 - x0, y1 - y0
 
+    def including(self, xy, margin: float = 2.0) -> "SceneInfo":
+        """Widen the bounds to contain a point.
+
+        A goal outside the grid is unreachable in a way that looks like a
+        planner failure: to_cell() returns an out-of-range index, every A*
+        call returns None, and the robot just sits reporting STUCK. Scene
+        geometry alone does not know where you intend to send it.
+        """
+        from dataclasses import replace
+        x, y = float(xy[0]), float(xy[1])
+        x0, y0, x1, y1 = self.bounds
+        return replace(self, bounds=(min(x0, x - margin), min(y0, y - margin),
+                                     max(x1, x + margin), max(y1, y + margin)))
+
     def describe(self) -> str:
         x0, y0, x1, y1 = self.bounds
         return (f"scene x[{x0:.1f},{x1:.1f}] y[{y0:.1f},{y1:.1f}]  "
