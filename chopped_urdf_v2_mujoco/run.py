@@ -91,9 +91,13 @@ def montage(bot, path, width=320, height=240):
 
 def main():
     args = parse_args()
-    # The offscreen camera renders need a GL backend. egl works headless; with a
-    # viewer we must share the windowed backend instead.
-    os.environ["MUJOCO_GL"] = "egl" if (args.headless or args.cameras) else "glfw"
+    # The offscreen camera renders need a GL backend. egl works headless on
+    # Linux; Windows has no egl backend, so headless renders there ride the
+    # same wgl context a viewer would use.
+    if args.headless or args.cameras:
+        os.environ["MUJOCO_GL"] = "wgl" if os.name == "nt" else "egl"
+    else:
+        os.environ["MUJOCO_GL"] = "glfw"
 
     from bracketbot_sim.robot import BracketBot
 
