@@ -44,6 +44,8 @@ def parse_args():
     p.add_argument("--epochs", type=int, default=30)
     p.add_argument("--batch", type=int, default=16)
     p.add_argument("--model", default="yolov8n.pt", help="base weights")
+    p.add_argument("--device", default=None,
+                   help="torch device: 'cpu' (default) or '0' for the first GPU")
     p.add_argument("--dataset-only", action="store_true")
     p.add_argument("--keep", action="store_true",
                    help="reuse an existing dataset instead of regenerating")
@@ -78,12 +80,14 @@ def main():
         print(f"dataset ready: {yaml_path}")
         return
 
+    import torch
     from ultralytics import YOLO
     model = YOLO(args.model)
-    print(f"training {args.model} for {args.epochs} epochs on CPU "
+    device = args.device if args.device else ("0" if torch.cuda.is_available() else "cpu")
+    print(f"training {args.model} for {args.epochs} epochs on device={device} "
           f"(imgsz={args.width})")
     model.train(data=str(yaml_path), epochs=args.epochs, imgsz=args.width,
-                batch=args.batch, device="cpu", project=str(DEFAULT_RUN),
+                batch=args.batch, device=device, project=str(DEFAULT_RUN),
                 name="bracketbot_yolo", exist_ok=True, seed=args.seed,
                 val=True, plots=False, verbose=True)
 
