@@ -204,6 +204,29 @@ class TestSurveyInterpret(unittest.TestCase):
         self.assertLess(np.linalg.norm(r.detection.position[:2] - self.goal[:2]), 0.5)
         self.assertLess(ang(r.heading, true_heading(self.shots[k], self.goal)), np.radians(3))
 
+    def test_normalised_box_is_ranged_in_the_chosen_photo(self):
+        k, px = self.view
+        intr = self.shots[k].obs.intrinsics
+        box = [(px[0] - 6) / intr.width * 1000, (px[1] - 25) / intr.height * 1000,
+               (px[0] + 6) / intr.width * 1000, (px[1] + 25) / intr.height * 1000]
+        r = self.sv.interpret(self.shots, {"goal_found": True, "photo": k,
+                                           "bbox_2d": box, "confidence": 0.9})
+        self.assertEqual(r.heading_source, "range")
+        self.assertLessEqual(max(abs(r.pixel[0] - px[0]), abs(r.pixel[1] - px[1])), 1)
+        self.assertLess(np.linalg.norm(r.detection.position[:2] - self.goal[:2]), 0.5)
+
+    def test_wrong_model_heading_does_not_override_the_ranged_box(self):
+        # Live, the no-think model's heading_deg was once 30 deg off while its
+        # box ranged to 0.15 m; the ranged heading must win.
+        k, px = self.view
+        intr = self.shots[k].obs.intrinsics
+        box = [(px[0] - 6) / intr.width * 1000, (px[1] - 25) / intr.height * 1000,
+               (px[0] + 6) / intr.width * 1000, (px[1] + 25) / intr.height * 1000]
+        r = self.sv.interpret(self.shots, {"goal_found": True, "photo": k, "bbox_2d": box,
+                                           "heading_deg": 30, "confidence": 0.9})
+        self.assertEqual(r.heading_source, "range")
+        self.assertLess(ang(r.heading, true_heading(self.shots[k], self.goal)), np.radians(3))
+
     def test_pixel_dict_form(self):
         k, px = self.view
         r = self.sv.interpret(self.shots, {"goal_found": True, "photo": k, "confidence": 0.9,
@@ -294,6 +317,12 @@ class TestSurveyRequest(unittest.TestCase):
         self.assertEqual(img.size, (320, 240))
         self.assertFalse(res.found)
         self.assertEqual(res.completion_tokens, 77)
+
+    def test_prompt_asks_for_a_normalised_box(self):
+        p = LlmSurvey().prompt(self.shots)
+        self.assertIn('"bbox_2d"', p)
+        self.assertIn("0-1000", p)
+        self.assertIn("THAT photo", p)
 
     def test_http_error_is_a_clean_not_found(self):
         sv = LlmSurvey()

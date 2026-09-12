@@ -55,6 +55,11 @@ class VisualNavigator:
                  survey=None, survey_turn_tol: float = 0.08,
                  survey_settle: float = 0.3, survey_turn_timeout: float = 6.0,
                  provisional_distance: float = 3.0,
+                 track: str = "detector", lost_after: float = 4.0,
+                 relocate_distance: float = 1.0, max_researches: int = 3,
+                 research_cooldown: float = 3.0, sighting_range: float = 7.0,
+                 presence_radius: float = 0.45, presence_min_points: int = 20,
+                 goal_probe_height: float = 0.6, research_scan_turns: int = 2,
                  detector=None, verbose: bool = False):
         # `detector(obs, robot_yaw=...) -> list[Detection]`. Defaults to the
         # colour detector; a YoloDetector satisfies the same contract, so
@@ -112,6 +117,27 @@ class VisualNavigator:
         self._turn_since: float | None = None
         self._goal_provisional = False
 
+        # Losing the goal, and finding it again.
+        #   track="detector": the goal is confirmed by the per-frame detector.
+        #   track="depth":    once a goal is known, confirm it from the depth
+        #                     image alone (is something still standing there?)
+        #                     and stop asking the detector -- with the LLM
+        #                     detector that removes every per-frame query.
+        if track not in ("detector", "depth"):
+            raise ValueError(f"track must be 'detector' or 'depth', not {track!r}")
+        self.track = track
+        self.lost_after, self.relocate_distance = lost_after, relocate_distance
+        self.max_researches, self.research_cooldown = max_researches, research_cooldown
+        self.sighting_range = sighting_range
+        self.presence_radius, self.presence_min_points = presence_radius, presence_min_points
+        self.goal_probe_height = goal_probe_height
+        self.research_scan_turns = research_scan_turns
+        self._empty_turns = 0
+        self.researches = 0
+        self._last_sighting: float | None = None
+        self._miss_since: float | None = None
+        self._search_done_at: float | None = None
+
         self.state = (self.SURVEY if (survey is not None and self.fixed_goal is None)
                       else self.SCAN)
         self.detections: list[perception.Detection] = []
@@ -148,8 +174,11 @@ class VisualNavigator:
         # pace themselves on the sim clock, not the wall clock. During a survey
         # the model looks at every photo at once at the end, so querying the
         # per-frame detector while turning would only duplicate that, ~10 s a go.
-        self.detections = ([] if self.state == self.SURVEY
-                           else self.detector(self.obs, robot_yaw=bot.yaw, t=t))
+        goal_known = self.goal_xy is not None and not self._goal_provisional
+        use_detector = (self.state != self.SURVEY and
+                        not (self.track == "depth" and goal_known))
+        self.detections = (self.detector(self.obs, robot_yaw=bot.yaw, t=t)
+                           if use_detector else [])
         if len(self.detections) >= len(self.best_detections):
             self.best_obs, self.best_detections, self.best_time = (
                 self.obs, list(self.detections), t)
@@ -179,8 +208,19 @@ class VisualNavigator:
                                "provisional goal")
                 self.goal_xy = estimate
                 self._goal_provisional = False
+            elif np.linalg.norm(estimate - self.goal_xy) > self.relocate_distance:
+                # Seen somewhere else entirely: the goal moved (or the old
+                # estimate was wrong). Averaging would crawl there over many
+                # sightings while driving toward the midpoint; jump instead.
+                self._note(f"t={t:.1f}s goal seen at ({estimate[0]:.2f}, {estimate[1]:.2f}), "
+                           f"{np.linalg.norm(estimate - self.goal_xy):.2f} m from where it was; "
+                           "moving the goal there")
+                self.goal_xy = estimate
+                self.path = []
+                self._next_plan = t
             else:
                 self.goal_xy = 0.7 * self.goal_xy + 0.3 * estimate
+        self._update_tracking(t, bool(goals))
 
     def _integrate(self, obs):
         """Fold one RGB-D frame into the occupancy grid."""
@@ -216,7 +256,12 @@ class VisualNavigator:
         if cells is None:
             self._plan_failures += 1
             if self._plan_failures >= 8:
-                self.state = self.STUCK
+                if self.fixed_goal is None:
+                    # No route to where we think the goal is: the estimate may
+                    # be wrong, so look again before giving up.
+                    self._research(bot, self._last_t or 0.0, "no route to the goal")
+                else:
+                    self.state = self.STUCK
             return False
         self._plan_failures = 0
         cells = planning.shortcut(blocked, cells)
@@ -331,11 +376,112 @@ class VisualNavigator:
         else:
             why = res.error or "goal not found"
             self._note(f"t={t:.1f}s survey: {why}; falling back to a spin scan")
+            self._search_done_at = t
             self.state = self.SCAN
             return
+        self._search_done_at = t
+        self._miss_since = None
         self.replan(bot)
         self._next_plan = t + self.plan_period
         self.state = self.NAVIGATE
+
+    # ------------------------------------------------------- losing the goal
+    def _update_tracking(self, t, sighted):
+        """Record a sighting, or start/continue a miss when one was expected."""
+        tracking = (self.fixed_goal is None and self.goal_xy is not None and
+                    not self._goal_provisional and
+                    self.state in (self.NAVIGATE, self.ARRIVED))
+        if not tracking or self.obs is None:
+            self._miss_since = None
+            return
+        if not sighted and self.track == "depth":
+            sighted = self._present(self.obs)
+        if sighted:
+            self._last_sighting = t
+            self._miss_since = None
+            return
+        if not self._expect_visible(self.obs):
+            # Out of frame, out of range or behind something: not seeing it
+            # says nothing about whether it is still there.
+            self._miss_since = None
+            return
+        if self._miss_since is None:
+            self._miss_since = t
+
+    def _goal_probe(self):
+        return np.array([self.goal_xy[0], self.goal_xy[1],
+                         self.floor_z + self.goal_probe_height])
+
+    def _expect_visible(self, obs) -> bool:
+        """Should the camera be able to see the goal in this frame?"""
+        target = self._goal_probe()
+        if np.linalg.norm(target[:2] - obs.cam_pos[:2]) > self.sighting_range:
+            return False
+        p = obs.cam_mat.T @ (target - obs.cam_pos)
+        if p[2] >= -1e-6:
+            return False                              # behind the camera
+        intr = obs.intrinsics
+        u = intr.fx * p[0] / -p[2] + intr.cx
+        v = intr.fy * -p[1] / -p[2] + intr.cy
+        margin = 0.1 * intr.width
+        if not (margin <= u <= intr.width - margin and 0 <= v < intr.height):
+            return False
+        ui, vi = int(u), int(v)
+        patch = obs.depth[max(vi - 3, 0):vi + 4, max(ui - 3, 0):ui + 4]
+        blocked = np.isfinite(patch) & (patch < -p[2] - 0.6)
+        return float(blocked.mean()) < 0.5 if patch.size else False
+
+    def _present(self, obs) -> bool:
+        """Does the depth image show something standing at the goal?"""
+        pts = obs.points[obs.valid]
+        if not len(pts):
+            return False
+        z = pts[:, 2] - self.floor_z
+        near = np.linalg.norm(pts[:, :2] - self.goal_xy, axis=1) < self.presence_radius
+        standing = (z > 0.25) & (z < getattr(self, "obstacle_ceiling", 2.0))
+        return int((near & standing).sum()) >= self.presence_min_points
+
+    def _goal_lost(self, t) -> bool:
+        if self._miss_since is None or t - self._miss_since < self.lost_after:
+            return False
+        cooled = (self._search_done_at is None or
+                  t - self._search_done_at >= self.research_cooldown)
+        return cooled
+
+    def _research(self, bot, t, why):
+        """Forget the goal and run the search again from where the robot is."""
+        self._miss_since = None
+        if self.researches >= self.max_researches:
+            self._note(f"t={t:.1f}s {why}; already re-searched {self.researches} "
+                       "time(s), giving up")
+            self.state = self.STUCK
+            bot.drive(0.0, 0.0)
+            return
+        self.researches += 1
+        self._note(f"t={t:.1f}s {why}; re-running the search "
+                   f"({self.researches}/{self.max_researches}) from "
+                   f"({bot.position[0]:.2f}, {bot.position[1]:.2f})")
+        self.goal_xy = None
+        self._goal_provisional = False
+        self.path = []
+        self._wp = 0
+        self._plan_failures = 0
+        self._empty_turns = 0
+        forget = getattr(self.detector, "forget", None)
+        if callable(forget):
+            forget()
+        if self.survey is not None:
+            self.survey_shots = []
+            self.survey_result = None
+            self._survey_plan = None
+            self._survey_idx = 0
+            self._settle_since = None
+            self._turn_since = t
+            self.state = self.SURVEY
+        else:
+            self._scan_start, self._scan_yaw = None, 0.0
+            self.state = self.SCAN
+        bot.drive(0.0, 0.0)
 
     def _clip_to_grid(self, xy):
         """Keep a guessed goal inside the map, or planning cannot address it."""
@@ -365,6 +511,8 @@ class VisualNavigator:
             self._next_plan = t
             self._settle_since = None
             self._turn_since = t
+            self._miss_since = None
+            self._search_done_at = None
         self._last_t = t
 
         if t >= self._next_sense:
@@ -378,6 +526,10 @@ class VisualNavigator:
             self._plan_failures = 0
             self._next_plan = 0.0
             self._wp = 0
+
+        if self._goal_lost(t):
+            self._research(bot, t, f"goal not seen for {t - self._miss_since:.1f}s "
+                                   "where it should be visible")
 
         if self.state == self.SURVEY:
             self._survey_tick(bot, t)
@@ -394,9 +546,20 @@ class VisualNavigator:
                     self._note(f"t={t:.1f}s scan done, goal at "
                                f"({self.goal_xy[0]:.2f}, {self.goal_xy[1]:.2f}), "
                                f"{len(self.path)} waypoints")
+                    self._search_done_at = t
+                    self._miss_since = None
                     self.state = self.NAVIGATE
             elif turned:
                 self._scan_yaw = 0.0      # nothing found, go round again
+                self._empty_turns += 1
+                # The very first search spins until it finds something. A
+                # RE-search that keeps turning up nothing is a failed search:
+                # without this, a goal that vanished leaves the robot spinning
+                # for ever and never reaching STUCK.
+                if self.researches > 0 and self._empty_turns >= self.research_scan_turns:
+                    self._research(bot, t, f"goal not found after {self._empty_turns} "
+                                           "full turn(s)")
+                    return
             bot.drive(0.0, self.scan_rate)
             return
 

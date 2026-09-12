@@ -101,6 +101,19 @@ def parse_args(argv=None):
                         "across all photos and 1024 ran out before any answer")
     p.add_argument("--survey-conf", type=float, default=0.40,
                    help="min confidence to accept the survey's answer")
+    p.add_argument("--llm-thinking", action="store_true",
+                   help="let the model reason before answering: ~4x slower "
+                        "(single frame 17 s vs 5 s, survey 31 s vs 6 s)")
+    p.add_argument("--track", choices=["detector", "depth"], default=None,
+                   help="how the goal is confirmed once found: 'detector' asks "
+                        "the detector every frame; 'depth' just checks the depth "
+                        "image still shows something there (no per-frame LLM "
+                        "queries). Default: depth with --survey, else detector")
+    p.add_argument("--lost-after", type=float, default=4.0,
+                   help="sim seconds without seeing a goal that should be in "
+                        "view before searching for it again")
+    p.add_argument("--max-researches", type=int, default=3,
+                   help="how many times to re-run the search before giving up")
     return p.parse_args(argv)
 
 
@@ -129,10 +142,18 @@ def build_detector(args, info=None):
     det = LlmGoalDetector(base_url=args.llm_url, model=args.llm_model,
                           query_period=args.llm_period,
                           min_confidence=args.llm_conf,
-                          max_tokens=args.llm_max_tokens, verbose=True)
+                          max_tokens=args.llm_max_tokens, verbose=True,
+                          thinking=args.llm_thinking)
     print(f"detector: local LLM {args.llm_url} model={args.llm_model} "
           f"query every {args.llm_period:g} sim s")
     return det
+
+
+def resolve_track(args) -> str:
+    """How a found goal is confirmed. A survey already ranged the goal with the
+    LLM, so confirming it from depth alone avoids a model query every few
+    seconds; without a survey the detector is the only thing that finds it."""
+    return args.track or ("depth" if args.survey else "detector")
 
 
 def build_survey(args):
@@ -141,7 +162,8 @@ def build_survey(args):
     from vision_sim.llm_survey import LlmSurvey
     survey = LlmSurvey(base_url=args.llm_url, model=args.llm_model,
                        n_shots=args.survey_shots, min_confidence=args.survey_conf,
-                       max_tokens=args.survey_max_tokens, verbose=True)
+                       max_tokens=args.survey_max_tokens, verbose=True,
+                       thinking=args.llm_thinking)
     print(f"survey: {args.survey_shots} photos, one query to {args.llm_url}")
     return survey
 
@@ -325,7 +347,10 @@ def main():
     nav = VisualNavigator.for_bot(bot, goal=goal, camera=args.camera,
                                   scan_turns=args.seed_scan, verbose=True,
                                   detector=build_detector(args, info),
-                                  survey=build_survey(args))
+                                  survey=build_survey(args),
+                                  track=resolve_track(args),
+                                  lost_after=args.lost_after,
+                                  max_researches=args.max_researches)
     print("cameras:", ", ".join(bot.camera_names))
     print(info.describe())
     print(f"scene: {args.scene}")
@@ -412,6 +437,8 @@ def main():
                   f"{r.latency:.1f}s, {r.completion_tokens} tokens")
         elif r is not None:
             print(f"  answer: not found ({r.error or r.reason})")
+    if getattr(nav, "researches", 0):
+        print(f"re-searched {nav.researches} time(s) after losing the goal")
 
     if nav.obs is not None:
         figure(bot, nav, track, args.out, elapsed, truth=truth)

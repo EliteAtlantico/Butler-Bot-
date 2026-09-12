@@ -48,27 +48,16 @@ DEFAULT_MODEL = "Qwen/Qwen3.8-27B"
 
 # --------------------------------------------------------------------------- prompt
 PROMPT_TEMPLATE = """You are the visual cortex of a balancing two-wheeled robot on an indoor obstacle course.
-You see ONE frame from its head-mounted camera. The image is {width} px wide and {height} px tall
-(horizontal_px: 0 = left edge; vertical_px: 0 = top edge).
+You see ONE frame from its head-mounted camera. The image is {width} px wide and {height} px tall.
 
 GOAL: a tall RED cylinder standing on the floor. That is the one object you must locate precisely.
 OTHERS: orange barriers (low walls), blue pillars, a grey checkerboard floor, a hazy sky. Ignore the
 robot's own white arms if they enter the frame.
 
-Reason about what you see, then answer with ONLY a single-line compact JSON object -- no prose,
-no markdown fences, no newlines, nothing after the closing brace. Keys, in this order:
-{{
-  "scene": "<one short sentence: what the scene is overall>",
-  "goal_found": true/false,
-  "goal_horizontal_px": <int or null>,
-  "goal_vertical_px": <int or null>,
-  "goal_confidence": <0.0-1.0>,
-  "goal_depth_cue": "<one phrase: near/mid/far and left/centre/right, e.g. 'mid distance, slightly left of centre, rising above the barrier'>",
-  "other_objects": [ {{ "label": "barrier|pillar|other", "horizontal_px": <int or null>, "vertical_px": <int or null>, "note": "<short>" }} ],
-  "movement": "<one sentence: what the robot should do to reach the goal, e.g. 'rotate ~10 deg left, then advance while keeping the column in view'>"
-}}
-Put the GOAL's vertical axis at goal_horizontal_px/goal_vertical_px (its visible centre, not its base).
-If you are not confident the red goal is present, set goal_found=false and null the two pixel fields."""
+Answer with ONLY a single-line compact JSON object -- no prose, no markdown fences. Keys, in this order:
+{{"goal_found": true/false, "bbox_2d": [x1, y1, x2, y2] or null, "goal_confidence": <0.0-1.0>, "movement": "<at most eight words: how to reach the goal>"}}
+bbox_2d is the goal's bounding box with coordinates normalised to 0-1000 across the image width (x) and
+height (y). If you are not confident the red goal is present, set goal_found=false and bbox_2d=null."""
 
 
 def _extract_json(text: str):
@@ -126,6 +115,28 @@ def _png_data_url(rgb: np.ndarray) -> str:
     return "data:image/png;base64," + base64.b64encode(buf.getvalue()).decode()
 
 
+def _goal_pixel(reason: dict, width: int, height: int) -> tuple[int, int] | None:
+    """The goal's pixel (u, v) from an answer.
+
+    Prefers `bbox_2d` normalised to 0-1000, which is the format this Qwen VL
+    model is trained to emit: asked for a raw pixel instead, it answered with
+    0-1000 values anyway (a box "centre" of (500, 292) in a 320x240 frame),
+    and ranged positions were up to 4.8 m off. Legacy `goal_horizontal_px` /
+    `goal_vertical_px` answers are still accepted.
+    """
+    box = reason.get("bbox_2d") if isinstance(reason, dict) else None
+    if isinstance(box, (list, tuple)) and len(box) == 4:
+        vals = [_to_float(b) for b in box]
+        if None not in vals:
+            x1, y1, x2, y2 = (min(max(v, 0.0), 1000.0) for v in vals)
+            cx, cy = (x1 + x2) / 2, (y1 + y2) / 2
+            return (int(min(round(cx / 1000 * width), width - 1)),
+                    int(min(round(cy / 1000 * height), height - 1)))
+    u = _to_int(reason.get("goal_horizontal_px"))
+    v = _to_int(reason.get("goal_vertical_px"))
+    return (u, v) if u is not None and v is not None else None
+
+
 _TRUE = {"true", "yes", "y", "1"}
 _FALSE = {"false", "no", "n", "0", "null", "none", ""}
 
@@ -153,7 +164,8 @@ class LLMClient:
 
     def __init__(self, base_url: str = DEFAULT_BASE_URL, model: str = DEFAULT_MODEL,
                  max_tokens: int = 2048, temperature: float = 0.1,
-                 timeout: float = 120.0, verbose: bool = False):
+                 timeout: float = 120.0, verbose: bool = False,
+                 thinking: bool = False):
         if requests is None:
             raise RuntimeError("the 'requests' package is required for LLMGoalDetector")
         self.base_url = base_url.rstrip("/")
@@ -162,6 +174,7 @@ class LLMClient:
         self.temperature = temperature
         self.timeout = timeout
         self.verbose = verbose
+        self.thinking = bool(thinking)
         self.last_finish_reason: str | None = None
         self.last_usage: dict = {}
         self.last_reasoning_chars = 0
@@ -169,7 +182,7 @@ class LLMClient:
     def ask_image(self, rgb: np.ndarray, prompt: str) -> tuple[str, float]:
         """Send one image + prompt; return (content_text, latency_seconds)."""
         return self._chat([
-            {"type": "text", "text": prompt + "\n\n/no_think"},
+            {"type": "text", "text": prompt + self._suffix()},
             {"type": "image_url", "image_url": {"url": _png_data_url(rgb)}},
         ])
 
@@ -182,12 +195,15 @@ class LLMClient:
         """
         if len(images) != len(labels):
             raise ValueError(f"{len(images)} images but {len(labels)} labels")
-        content = [{"type": "text", "text": prompt + "\n\n/no_think"}]
+        content = [{"type": "text", "text": prompt + self._suffix()}]
         for rgb, label in zip(images, labels):
             content.append({"type": "text", "text": str(label)})
             content.append({"type": "image_url",
                             "image_url": {"url": _png_data_url(rgb)}})
         return self._chat(content)
+
+    def _suffix(self) -> str:
+        return "" if self.thinking else "\n\n/no_think"
 
     def _chat(self, content: list) -> tuple[str, float]:
         payload = {
@@ -195,11 +211,14 @@ class LLMClient:
             "messages": [{"role": "user", "content": content}],
             "max_tokens": self.max_tokens,
             "temperature": self.temperature,
-            # The Qwen build otherwise spends the whole budget on internal
-            # reasoning and returns empty content; force straight-to-answer.
-            # It still reasons on hard multi-image prompts despite this --
-            # see `last_reasoning_chars` -- so give those a large max_tokens.
-            "enable_thinking": False,
+            # Thinking on or off. llama-server only honours this inside
+            # chat_template_kwargs -- that is where the chat template reads it.
+            # The top-level key alone is silently ignored: the model kept
+            # reasoning (2-4k chars per answer) and a single frame took 17.2 s
+            # instead of 4.8 s; an 8-photo survey 31.2 s instead of 6.4 s.
+            # The top-level key is kept for servers that read it there.
+            "enable_thinking": self.thinking,
+            "chat_template_kwargs": {"enable_thinking": self.thinking},
         }
         t0 = time.time()
         r = requests.post(f"{self.base_url}/chat/completions", json=payload,
@@ -240,8 +259,10 @@ class LlmGoalDetector:
                  min_range: float = 0.4, max_range: float = 12.0,
                  self_radius: float = 0.55, ground_z: float = 0.0,
                  max_tokens: int = 2048, temperature: float = 0.1,
-                 timeout: float = 120.0, verbose: bool = False):
-        self.client = LLMClient(base_url, model, max_tokens, temperature, timeout, verbose)
+                 timeout: float = 120.0, verbose: bool = False,
+                 thinking: bool = False):
+        self.client = LLMClient(base_url, model, max_tokens, temperature, timeout, verbose,
+                                thinking=thinking)
         self.goal_label = goal_label
         self.query_period = max(0.5, float(query_period))
         self.min_confidence = min_confidence
@@ -259,6 +280,16 @@ class LlmGoalDetector:
         self.queries = 0
         self.errors = 0
         self.truncated = 0
+
+    def forget(self):
+        """Drop the cached detection and query again at the next call.
+
+        Called when the navigator decides the goal is lost: without it the
+        cache keeps handing back the old sighting until the next scheduled
+        query, and a re-search would start from a goal that is not there.
+        """
+        self._cache = []
+        self._last_query = None
 
     # --------------------------------------------------------------- cadence
     def _due(self, t: float | None) -> bool:
@@ -309,8 +340,7 @@ class LlmGoalDetector:
             mv = str(reason.get("movement", ""))
             if det is not None:
                 print(f"    [llm] t={self._clock}={self._last_query:.1f} FOUND "
-                      f"{self.goal_label} @ px({_to_int(reason.get('goal_horizontal_px'))},"
-                      f"{_to_int(reason.get('goal_vertical_px'))}) "
+                      f"{self.goal_label} @ px{_goal_pixel(reason, obs.intrinsics.width, obs.intrinsics.height)} "
                       f"conf={_to_float(reason.get('goal_confidence'))}")
             print(f"          scene : {scene}")
             if mv:
@@ -323,17 +353,17 @@ class LlmGoalDetector:
             if self.verbose:
                 print(f"    [llm] goal not found: {reason.get('scene', '')!r}")
             return None
-        u = _to_int(reason.get("goal_horizontal_px"))
-        v = _to_int(reason.get("goal_vertical_px"))
+        h, w = obs.depth.shape
+        px = _goal_pixel(reason, w, h)
         conf = _to_float(reason.get("goal_confidence"))
         if conf is None:
             conf = 1.0
-        if u is None or v is None or conf < self.min_confidence:
+        if px is None or conf < self.min_confidence:
             if self.verbose:
-                print(f"    [llm] low-confidence/invalid goal (conf={conf}, px={u},{v})")
+                print(f"    [llm] low-confidence/invalid goal (conf={conf}, px={px})")
             return None
 
-        h, w = obs.depth.shape
+        u, v = px
         u = int(np.clip(u, 0, w - 1))
         v = int(np.clip(v, 0, h - 1))
         r = self.patch_radius

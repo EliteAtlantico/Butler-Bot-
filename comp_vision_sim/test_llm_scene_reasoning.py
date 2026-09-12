@@ -352,6 +352,13 @@ class TestClientRequest(unittest.TestCase):
             client.ask_image(np.zeros((4, 4, 3), np.uint8), "p")
         self.assertEqual(client.last_finish_reason, "length")
 
+    def test_prompt_asks_for_a_normalised_box(self):
+        det = LlmGoalDetector()
+        calls = stub(det, answer(found=False))
+        det(FakeObs(), t=0.0)
+        self.assertIn('"bbox_2d"', calls[0])
+        self.assertIn("0-1000", calls[0])
+
     def test_prompt_states_the_frame_size(self):
         det = LlmGoalDetector()
         calls = stub(det, answer(found=False))
@@ -419,6 +426,16 @@ class TestPixelToWorld(unittest.TestCase):
         d = self.assert_on_goal(dets, obs)
         self.assertGreater(d.bearing, 0.1)
 
+    def test_normalised_box_answer_is_ranged(self):
+        place(self.bot, 0.0, 0.0, 0.0)
+        obs = perception.observe(self.bot, width=320, height=240, max_range=12.0)
+        u, v = visible_pixel(obs, self.goal)
+        box = [(u - 6) / 320 * 1000, (v - 25) / 240 * 1000,
+               (u + 6) / 320 * 1000, (v + 25) / 240 * 1000]
+        obs, dets = self.locate(0.0, 0.0, 0.0, goal_found=True, bbox_2d=box,
+                                goal_confidence=0.9)
+        self.assert_on_goal(dets, obs)
+
     def test_goal_not_found(self):
         _, dets = self.locate(0.0, 0.0, 0.0, **answer(found=False))
         self.assertEqual(dets, [])
@@ -455,6 +472,38 @@ class TestPixelToWorld(unittest.TestCase):
         self.assertEqual(d.pixels, 0)
         self.assertTrue(np.all(np.isfinite(d.position)))
         self.assertGreater(d.position[0], obs.cam_pos[0], "ray should point forward")
+
+
+class TestBoxAnswers(unittest.TestCase):
+    """bbox_2d normalised to 0-1000: the format the model emits natively."""
+
+    def test_centre_of_a_normalised_box(self):
+        self.assertEqual(L._goal_pixel({"bbox_2d": [450, 200, 550, 400]}, 320, 240), (160, 72))
+
+    def test_the_real_answer_shape(self):
+        # the no-think answer from the live experiment at the start pose
+        self.assertEqual(L._goal_pixel({"goal_found": True, "bbox_2d": [481, 238, 519, 348]},
+                                       320, 240), (160, 70))
+
+    def test_values_are_clipped_and_ordered(self):
+        self.assertEqual(L._goal_pixel({"bbox_2d": [1200, 700, -50, 500]}, 320, 240), (160, 144))
+        self.assertEqual(L._goal_pixel({"bbox_2d": [1000, 1000, 1000, 1000]}, 320, 240), (319, 239))
+
+    def test_string_numbers(self):
+        self.assertEqual(L._goal_pixel({"bbox_2d": ["450", "200", "550", "400"]}, 320, 240), (160, 72))
+
+    def test_legacy_pixel_fields_still_work(self):
+        self.assertEqual(L._goal_pixel({"goal_horizontal_px": 12, "goal_vertical_px": 34}, 320, 240),
+                         (12, 34))
+
+    def test_box_wins_over_legacy_fields(self):
+        r = {"bbox_2d": [450, 200, 550, 400], "goal_horizontal_px": 1, "goal_vertical_px": 1}
+        self.assertEqual(L._goal_pixel(r, 320, 240), (160, 72))
+
+    def test_malformed_boxes(self):
+        for bad in (None, [1, 2, 3], "450,200,550,400", [1, None, 3, 4], ["a", 1, 2, 3]):
+            with self.subTest(bad=bad):
+                self.assertIsNone(L._goal_pixel({"bbox_2d": bad}, 320, 240))
 
 
 # ================================================================= integration

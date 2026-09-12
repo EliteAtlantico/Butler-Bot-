@@ -36,8 +36,8 @@ from dataclasses import dataclass, field
 import numpy as np
 
 from .llm_reasoner import (DEFAULT_BASE_URL, DEFAULT_MODEL, LLMClient,
-                           LlmGoalDetector, _extract_json, _to_bool, _to_float,
-                           _to_int)
+                           LlmGoalDetector, _extract_json, _goal_pixel, _to_bool,
+                           _to_float, _to_int)
 from .perception import Detection, Observation
 
 
@@ -60,9 +60,10 @@ robot's own white arms if they enter a frame.
 Compare all the photos. If the goal appears in more than one, choose the photo where it is closest to
 the horizontal centre. Answer with ONLY a single-line compact JSON object -- no prose, no markdown
 fences, nothing after the closing brace. Keys, in this order:
-{{"goal_found": true/false, "photo": <photo index or null>, "goal_px": [<horizontal_px>, <vertical_px>] or null, "heading_deg": <world heading from the robot toward the goal, or null>, "confidence": <0.0-1.0>, "reason": "<one short sentence>"}}
-Put goal_px on the goal's visible centre, not its base. If you are not confident the red goal is in any
-photo, set goal_found=false and null photo, goal_px and heading_deg."""
+{{"goal_found": true/false, "photo": <photo index or null>, "bbox_2d": [x1, y1, x2, y2] or null, "heading_deg": <world heading from the robot toward the goal, or null>, "confidence": <0.0-1.0>, "reason": "<one short sentence>"}}
+bbox_2d is the goal's bounding box in THAT photo, with coordinates normalised to 0-1000 across the photo's
+width (x) and height (y). If you are not confident the red goal is in any photo, set goal_found=false and
+null photo, bbox_2d and heading_deg."""
 
 
 @dataclass
@@ -131,14 +132,15 @@ class LlmSurvey:
                  n_shots: int = 8, goal_label: str = "target",
                  min_confidence: float = 0.40, max_tokens: int = 6144,
                  temperature: float = 0.1, timeout: float = 300.0,
-                 verbose: bool = False):
+                 verbose: bool = False, thinking: bool = False):
         if n_shots < 1:
             raise ValueError("a survey needs at least one shot")
         self.n_shots = int(n_shots)
         self.goal_label = goal_label
         self.min_confidence = min_confidence
         self.verbose = verbose
-        self.client = LLMClient(base_url, model, max_tokens, temperature, timeout, verbose)
+        self.client = LLMClient(base_url, model, max_tokens, temperature, timeout, verbose,
+                                thinking=thinking)
         # Reuse the single-frame detector's pixel -> world ranging verbatim, so
         # a survey hit and a live-frame hit are converted identically.
         self._ranger = LlmGoalDetector(base_url, model, goal_label=goal_label,
@@ -216,7 +218,14 @@ class LlmSurvey:
         if photo is not None and not (0 <= photo < len(shots)):
             res.notes.append(f"photo {photo} out of range")
             photo = None
-        pixel = _pixel(raw.get("goal_px"))
+        # The box is normalised within the CHOSEN photo, so it can only be
+        # turned into pixels once we know which photo that is.
+        pixel = None
+        if photo is not None and shots[photo].obs is not None:
+            intr = shots[photo].obs.intrinsics
+            pixel = _goal_pixel({"bbox_2d": raw.get("bbox_2d")}, intr.width, intr.height)
+        if pixel is None:
+            pixel = _pixel(raw.get("goal_px"))           # legacy pixel answers
         model_heading = _to_float(raw.get("heading_deg"))
 
         found_flag = raw.get("goal_found")
