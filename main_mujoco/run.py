@@ -127,10 +127,38 @@ def main():
         print(f"t={bot.time:.1f}s  pos={np.round(bot.position[:2], 3)}  "
               f"pitch={np.rad2deg(bot.pitch):+.2f}deg  fallen={bot.fallen}")
     else:
+        import glfw
         import mujoco.viewer
-        with mujoco.viewer.launch_passive(bot.model, bot.data) as viewer:
+
+        # The passive viewer runs no physics of its own (run_physics_thread=
+        # False): it is only a camera, and our loop below is the only thing
+        # that advances time. The stock 'run/pause' button therefore does
+        # nothing to the simulation, and the 'reset' button just rewinds the
+        # rendered state without touching the controllers. We wire the keys
+        # ourselves so they act on the real simulation.
+        paused = {"v": False}
+
+        def on_key(key):
+            # GLFW key codes (press only; the passive bridge delivers repeats,
+            # so guard against them).
+            if key in (glfw.KEY_SPACE, glfw.KEY_P):
+                paused["v"] = not paused["v"]
+                print(("paused" if paused["v"] else "resumed") +
+                      f"  t={bot.time:.2f}s  pos={bot.position[:2].round(2)}")
+            elif key == glfw.KEY_R:
+                bot.reset()           # re-anchors odometry + LQR refs
+                algorithm = make_algorithm(args.algorithm)  # fresh clock
+                print(f"reset  t=0.00s")
+
+        with mujoco.viewer.launch_passive(bot.model, bot.data,
+                                          key_callback=on_key) as viewer:
             start = time.time()
             while viewer.is_running():
+                if paused["v"]:
+                    # Hold the scene still: render, but don't step physics.
+                    viewer.sync()
+                    time.sleep(0.02)
+                    continue
                 if args.duration and bot.time > args.duration:
                     break
                 bot.step(0.02, controller=algorithm)

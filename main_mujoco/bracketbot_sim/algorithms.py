@@ -141,6 +141,12 @@ class ObstacleAvoider:
         return near(band[:, :half]), near(band[:, half:])   # (left, right)
 
     def __call__(self, bot, t):
+        # A sim reset (the viewer's 'r' key, or BracketBot.reset) zeros the
+        # clock, so t can jump backwards below _next. Re-seed the perception
+        # clock in that case, or we'd sit on the last command with the depth
+        # camera switched off and drive straight into the next obstacle.
+        if t < self._next:
+            self._next = t
         if t >= self._next:
             self._next = t + self.period
             d_left, d_right = self.sense(bot)
