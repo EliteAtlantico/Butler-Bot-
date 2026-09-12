@@ -28,13 +28,20 @@ os.environ.setdefault("MUJOCO_GL", "egl")
 import mujoco  # noqa: E402
 
 from .lqr import LQR_gains, PlantParams  # noqa: E402
-from .plant import measure_plant  # noqa: E402
+from .plant import measure_plant, sprung_bodies, sprung_com  # noqa: E402
 
 DEFAULT_XML = Path(__file__).resolve().parent.parent / "scene_dynamic.xml"
 
 # LQR weights: [x, x_dot, pitch, pitch_rate, yaw, yaw_rate] and [pitch_t, yaw_t]
 Q_DIAG = (60.0, 30.0, 260.0, 20.0, 40.0, 10.0)
 R_DIAG = (18.0, 1.0)
+# A second, position-stiff gain set for holding still while the arm works.
+# The driving gains weight position lightly on purpose -- a balancing robot
+# that fights every centimetre drives badly -- but that softness lets the
+# base overshoot ~0.25 m when the arm swings its CoM forward, which is the
+# difference between reaching over a table and headbutting it.
+Q_STATION = (700.0, 160.0, 260.0, 22.0, 40.0, 10.0)
+R_STATION = (18.0, 1.0)
 
 
 class BalanceController:
@@ -47,15 +54,20 @@ class BalanceController:
     produces sustained motion instead of a one-shot lurch.
     """
 
-    def __init__(self, plant: PlantParams, q_diag=Q_DIAG, r_diag=R_DIAG):
+    def __init__(self, plant: PlantParams, q_diag=Q_DIAG, r_diag=R_DIAG,
+                 q_station=Q_STATION, r_station=R_STATION):
         self.plant = plant
-        self.K = LQR_gains(q_diag, r_diag, plant)
+        self.K_drive = LQR_gains(q_diag, r_diag, plant)
+        self.K_station = LQR_gains(q_station, r_station, plant)
+        self.K = self.K_drive
         self.enabled = False
         self.v_cmd = 0.0        # m/s
         self.w_cmd = 0.0        # rad/s
         self.x_ref = 0.0
         self.yaw_ref = 0.0
         self.pitch_trim = plant.trim  # upright != pitch 0; see plant.py
+        self.trim_feedforward = True   # recompute the trim from the live CoM
+        self.trim_integral = 0.0
         self.max_torque = 15.0
         # Yaw gets a smaller torque budget than pitch on purpose. The two
         # commands share the same two motors, and a yaw term big enough to spin
@@ -70,7 +82,8 @@ class BalanceController:
         # station a fixed distance from where it was asked to stand.
         self.auto_trim = True
         self.trim_gain = 0.012
-        self.trim_limit = 0.09
+        self.trim_limit = 0.05
+        self._base_trim = plant.trim
         # Reference governor. The setpoints are ramps, so if the robot cannot
         # keep up (saturated torque, a wheel slipping, driving into a pillar)
         # the reference runs away and the error integrates without bound until
@@ -89,14 +102,22 @@ class BalanceController:
     def disable(self):
         self.enabled = False
 
+    def station_gains(self, on=True):
+        """Swap between driving gains and position-stiff station gains."""
+        self.K = self.K_station if on else self.K_drive
+
     def reset_reference(self, state):
         self.x_ref = state[0]
         self.yaw_ref = state[4]
 
-    def __call__(self, state, dt):
+    def __call__(self, state, dt, bot=None):
         """state -> (pitch_torque, yaw_torque)."""
         if not self.enabled:
             return 0.0, 0.0
+        if self.trim_feedforward and bot is not None:
+            self._base_trim = -float(np.arctan2(bot.com_lean, self.plant.L))
+        else:
+            self._base_trim = self.plant.trim
         self.x_ref += self.v_cmd * dt
         self.yaw_ref += self.w_cmd * dt
         self.x_ref = float(np.clip(self.x_ref, state[0] - self.max_lead,
@@ -113,10 +134,10 @@ class BalanceController:
         err[5] -= self.w_cmd
 
         if self.auto_trim:
-            self.pitch_trim = float(np.clip(
-                self.pitch_trim - self.trim_gain * err[0] * dt,
-                self.plant.trim - self.trim_limit,
-                self.plant.trim + self.trim_limit))
+            self.trim_integral = float(np.clip(
+                self.trim_integral - self.trim_gain * err[0] * dt,
+                -self.trim_limit, self.trim_limit))
+        self.pitch_trim = self._base_trim + self.trim_integral
 
         u = -self.K @ err
         return (float(np.clip(u[0], -self.max_torque, self.max_torque)),
@@ -141,6 +162,9 @@ class BracketBot:
         self.arm_joints = [n for n in self._joint_names()
                            if n not in ("left_wheel_joint", "right_wheel_joint")]
 
+        self._sprung = sprung_bodies(self.model)
+        self._wheel_body = [mujoco.mj_name2id(self.model, mujoco.mjtObj.mjOBJ_BODY,
+                                              f"{s}_wheel") for s in ("left", "right")]
         self._renderers: dict[tuple, mujoco.Renderer] = {}
         self._depth_renderers: dict[tuple, mujoco.Renderer] = {}
 
@@ -259,6 +283,28 @@ class BracketBot:
                         dtype=float)
 
     @property
+    def com_lean(self):
+        """Forward offset of the sprung CoM from the wheel axle, in the base
+        frame (metres). Positive means the mass is ahead of the wheels.
+
+        This is how the balance loop finds out that the arm moved. Reaching
+        forward with a 1.2 kg arm shifts the CoM by several centimetres, and a
+        controller that only discovers this through accumulated position error
+        lets the base creep 0.15-0.2 m before it catches up -- straight into
+        the table it was reaching over.
+        """
+        com = sprung_com(self.model, self.data, self._sprung)
+        axle = 0.5 * (self.data.xpos[self._wheel_body[0]]
+                      + self.data.xpos[self._wheel_body[1]])
+        return float((self.rotation.T @ (com - axle))[0])
+
+    @property
+    def ground_speed(self):
+        """True horizontal speed of the base (m/s). Not available on hardware;
+        the wheels' odometry reads non-zero when they slip."""
+        return float(np.linalg.norm(self.data.qvel[0:2]))
+
+    @property
     def fallen(self):
         return abs(self.pitch) > 0.6
 
@@ -277,6 +323,22 @@ class BracketBot:
     def set_arm_target(self, joint, value):
         self.data.ctrl[self._act_id(f"act_{joint}")] = float(value)
 
+    def joint_position(self, name):
+        return float(self.data.qpos[self.model.jnt_qposadr[self._jnt_id(name)]])
+
+    def joint_velocity(self, name):
+        return float(self.data.qvel[self.model.jnt_dofadr[self._jnt_id(name)]])
+
+    def body_position(self, name):
+        bid = mujoco.mj_name2id(self.model, mujoco.mjtObj.mjOBJ_BODY, name)
+        if bid < 0:
+            raise KeyError(f"no body named {name!r}")
+        return self.data.xpos[bid].copy()
+
+    def site_position(self, name):
+        sid = mujoco.mj_name2id(self.model, mujoco.mjtObj.mjOBJ_SITE, name)
+        return self.data.site_xpos[sid].copy()
+
     def set_arm_pose(self, pose: dict):
         for k, v in pose.items():
             self.set_arm_target(k, v)
@@ -292,7 +354,7 @@ class BracketBot:
         for _ in range(n):
             if controller is not None:
                 controller(self, self.time)
-            tau_pitch, tau_yaw = self.balance(self.state, self.dt)
+            tau_pitch, tau_yaw = self.balance(self.state, self.dt, self)
             # pitch torque drives both wheels together, yaw torque differentially
             self.set_wheel_torque(tau_pitch / 2 - tau_yaw / 2,
                                   tau_pitch / 2 + tau_yaw / 2)
@@ -335,6 +397,18 @@ class BracketBot:
     def all_cameras(self, width=320, height=240):
         """Every camera at once: {name: rgb}, plus depth for head_depth."""
         return {n: self.camera(n, width, height) for n in self.camera_names}
+
+    def camera_pose(self, name):
+        """(position, rotation matrix) of a camera in world coordinates."""
+        cid = mujoco.mj_name2id(self.model, mujoco.mjtObj.mjOBJ_CAMERA, name)
+        return self.data.cam_xpos[cid].copy(), self.data.cam_xmat[cid].reshape(3, 3).copy()
+
+    def point_cloud_world(self, name="head_depth", width=160, height=120,
+                          max_range=6.0):
+        """Depth image as Nx3 points in WORLD coordinates."""
+        pts = self.point_cloud(name, width, height, max_range)
+        p, R = self.camera_pose(name)
+        return pts @ R.T + p
 
     def point_cloud(self, name="head_depth", width=160, height=120,
                     max_range=6.0):

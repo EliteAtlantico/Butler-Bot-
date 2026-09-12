@@ -44,6 +44,18 @@ def _subtree(model, root_id):
     return out
 
 
+def sprung_bodies(model):
+    """Robot bodies above the wheels -- the inverted pendulum's mass."""
+    wheel_ids = [_body_id(model, n) for n in WHEEL_BODIES]
+    robot_ids = _subtree(model, _body_id(model, "chassis"))
+    return np.array([b for b in sorted(robot_ids) if b not in wheel_ids])
+
+
+def sprung_com(model, data, ids):
+    m = model.body_mass[ids]
+    return (m[:, None] * data.xipos[ids]).sum(0) / m.sum()
+
+
 def measure_plant(model, data) -> PlantParams:
     """Derive PlantParams from the model in its current configuration.
 
