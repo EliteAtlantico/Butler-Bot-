@@ -27,6 +27,8 @@ def parse_args():
     p.add_argument("--random", type=int, default=None, metavar="SEED",
                    help="random placement instead of the scene's layout")
     p.add_argument("--headless", action="store_true")
+    p.add_argument("--vision", action="store_true",
+                   help="find the item with the head camera instead of being told")
     p.add_argument("--duration", "-d", type=float, default=None,
                    help="sim seconds to run (headless default 90; viewer: until closed)")
     p.add_argument("--speed", type=float, default=1.0, help="realtime factor (viewer)")
@@ -72,7 +74,11 @@ def main():
     def start():
         rng = None if args.random is None else np.random.default_rng(args.random)
         scenarios.setup(bot, args.object, rng)
-        print(f"picking the {args.object}")
+        print(f"picking the {args.object}" + (" (finding it with the camera)"
+                                              if args.vision else ""))
+        if args.vision:
+            from handwrist.vision import CameraEstimator
+            return Pick(bot, args.object, estimator=CameraEstimator())
         return Pick(bot, args.object)
 
     pick = start()
@@ -93,7 +99,8 @@ def main():
                       f"lean={bot.com_lean * 1000:+.0f}mm "
                       f"site={np.round(err, 3) if err is not None else '-'}"
                       + contacts_str(bot, pick))
-        print(f"{'SUCCESS' if pick.succeeded else 'FAILED: ' + str(pick.failure)}"
+        why = pick.failure or f"ran out of time in {pick.phase}"
+        print(f"{'SUCCESS' if pick.succeeded else 'FAILED: ' + why}"
               f"  t={bot.time:.1f}s  retries={pick.retries}")
         bot.close()
         return

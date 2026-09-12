@@ -68,6 +68,24 @@ def truth_estimator(bot, spec):
     return truth_estimate(bot.model, bot.data, spec)
 
 
+def turn_in_place(bot, target, x_hold):
+    """One tick of an on-the-spot turn to world yaw `target`, holding the
+    base at odometry `x_hold`. True once there.
+
+    The yaw loop has a dead band: tyre scrub stalls it 5-8 deg short under
+    proportional control. A yaw-rate command with a 0.15 rad/s floor, then
+    pinning the yaw reference inside 0.03 rad, lands within 2 deg in 2-3 s.
+    """
+    bot.balance.x_ref = x_hold
+    err = _wrap(target - bot.yaw)
+    if abs(err) < 0.03:
+        bot.drive(0.0, 0.0)
+        bot.balance.yaw_ref = bot.yaw
+        return abs(bot.state[5]) < 0.1
+    bot.drive(0.0, float(np.sign(err) * np.clip(1.2 * abs(err), 0.15, 0.8)))
+    return False
+
+
 class ApproachPose:
     """Drive the base to a pose on open floor. No obstacle avoidance: this is
     the last-metre controller, meant to take over from NavigateTo once the
@@ -126,14 +144,7 @@ class ApproachPose:
         """Turn on the spot to `target`. True when there."""
         if self._x_hold is None:
             self._x_hold = bot.odometry          # don't wander while turning
-        bot.balance.x_ref = self._x_hold
-        err = _wrap(target - bot.yaw)
-        if abs(err) < 0.03:
-            bot.drive(0.0, 0.0)
-            bot.balance.yaw_ref = bot.yaw
-            return abs(bot.state[5]) < 0.1
-        bot.drive(0.0, float(np.sign(err) * np.clip(1.2 * abs(err), 0.15, 0.8)))
-        return False
+        return turn_in_place(bot, target, self._x_hold)
 
     def _drive(self, bot, point, line_yaw=None, tol=None, max_speed=None):
         """Drive to `point`, heading at it -- or, given `line_yaw`, along that
@@ -237,8 +248,13 @@ class ApproachPose:
 
 
 class Pick:
-    PHASES = ("plan", "approach", "settle", "pregrasp", "insert", "close",
-              "lift", "stow", "verify", "backoff", "done", "failed")
+    PHASES = ("plan", "search", "relook", "approach", "settle", "pregrasp",
+              "insert", "close", "lift", "stow", "verify", "backoff", "done",
+              "failed")
+    # the head camera's blind zone: how far back to stand to see the item again
+    RELOOK_RANGE = {"floor": 1.45, "raised": 1.15}
+    SEARCH_STEP = np.deg2rad(40.0)    # a 58 deg-wide camera: overlapping looks
+    SEARCH_STOPS = 9                  # a full turn
 
     def __init__(self, bot, name, estimator=truth_estimator, sides=("right", "left"),
                  max_retries=2, control_period=0.02, verbose=True):
@@ -258,6 +274,12 @@ class Pick:
         self.phase = "plan"
         self.plan = None
         self.estimate = None
+        self.first_estimate = None   # the estimate the first plan was made on
+        self._search_target = None
+        self._search_hold = None
+        self._search_stops = 0
+        self._relooked = False
+        self._relook_job = None          # (goal_xy, mover) while backing up
         self.failure = None
         self.retries = 0
         self._reparks = 0
@@ -322,6 +344,7 @@ class Pick:
             self._fail(reason, t)
             return
         self.arm.set_gripper(self.gripper.q_for_gap(self.plan.open_gap))
+        self._relooked = False               # a fresh look is allowed per retry
         self._backoff_to = self.arm.grasp_pose[0] + np.array([0.0, 0.0, 0.10])
         self._enter("backoff", t, f"{reason}, retry {self.retries}/{self.max_retries}")
 
@@ -392,7 +415,28 @@ class Pick:
 
     # --------------------------------------------------------------- phases
     def _plan(self, bot, t, dt):
-        self.estimate = self.estimator(bot, self.spec)
+        est = self.estimator(bot, self.spec)
+        if est is None and self.retries > 0 and self.estimate is not None \
+                and not self._relooked:
+            # Out of view after a failed grasp: the head camera cannot see
+            # that close, and a failed grasp has usually nudged the item, so
+            # the last sighting is stale -- re-approaching on it drove the
+            # wheels over the keys. Back off to where the camera can see.
+            self._relook_job = None
+            self._manipulating(False)
+            self._enter("relook", t, "backing up to look again")
+            return
+        if est is None:
+            # Still can't see it: fall back on the last sighting. With no
+            # sighting at all, go looking.
+            est = self.estimate
+        if est is None:
+            self._search_target = None
+            self._enter("search", t, f"can't see the {self.spec.name}, turning to look")
+            return
+        self.estimate = est
+        if self.first_estimate is None:
+            self.first_estimate = est
         plans = self.planner.plan(self.estimate, self.spec, self.sides)
         if not plans:
             self._fail("no reachable grasp", t)
@@ -407,6 +451,44 @@ class Pick:
         else:
             self._manipulating(False)
             self._enter("approach", t, self.plan.describe())
+
+    def _relook(self, bot, t, dt):
+        """Reverse straight back until the item is outside the camera's blind
+        zone, then plan again from a fresh look."""
+        if not self._arms_home(dt):
+            bot.drive(0.0, 0.0)
+            return
+        if self._relook_job is None:
+            item = self.estimate.center[:2]
+            here = bot.position[:2]
+            h = np.array([np.cos(bot.yaw), np.sin(bot.yaw)])
+            need = self.RELOOK_RANGE["floor" if self.estimate.bottom_z < 0.1 else "raised"]
+            back = max(need - float(np.linalg.norm(item - here)), 0.0)
+            goal = here - h * back
+            self._relook_job = (goal, ApproachPose(goal, bot.yaw))
+        goal, mover = self._relook_job
+        if mover._drive(bot, goal, mover.goal_yaw, tol=0.06) or self._elapsed(t) > 25.0:
+            bot.drive(0.0, 0.0)
+            self._relook_job = None
+            self._relooked = True
+            self._enter("plan", t, "looking again")
+
+    def _search(self, bot, t, dt):
+        """Turn on the spot in SEARCH_STEP increments, looking after each."""
+        if not self._arms_home(dt):
+            bot.drive(0.0, 0.0)
+            return
+        if self._search_target is None:
+            if self._search_stops >= self.SEARCH_STOPS:
+                self._fail(f"could not find the {self.spec.name}", t)
+                return
+            self._search_stops += 1
+            self._search_target = _wrap(bot.yaw + self.SEARCH_STEP)
+            self._search_hold = bot.odometry
+        if turn_in_place(bot, self._search_target, self._search_hold):
+            self._search_target = None
+            if self.estimator(bot, self.spec) is not None:
+                self._enter("plan", t, "there it is")
 
     def _approach(self, bot, t, dt):
         # Never drive with an arm out: it moves the CoM enough that the base
@@ -475,19 +557,37 @@ class Pick:
         elif self._elapsed(t) > 1.8:
             self._retry("fingers closed on nothing", t)
 
+    LIFT_SPEED = 0.15    # m/s up the mast
+
     def _lift(self, bot, t, dt):
+        """Lift straight up by raising the mast, every other joint held.
+
+        Asking the IK for "hand 12 cm higher" off the floor kept coming back as
+        "mast DOWN, shoulder up": the IK prices a metre of mast like a radian
+        of shoulder, and near a folded floor pose the shoulder route is the
+        cheaper one. The hand pressed the item into the floor, propped the
+        robot off its wheels, and it fell -- the main cause of failed floor
+        picks. The mast is a vertical lift column; used on its own it cannot
+        do anything but go up. The IK only lifts when the mast is nearly at
+        the top of its travel.
+        """
         bot.drive(0.0, 0.0)
-        p = self.plan.lift_pos
-        # Lift by handing the IK the final pose, NOT along a straight line.
-        # Walking the target up in small steps off the floor let the solver
-        # creep into a configuration against joint 4's limit where "hand up"
-        # came out as "mast down": the hand pressed into the floor, propped
-        # the robot off its wheels, and it fell (floor picks 20/24 vs 23/24).
-        # Straight lines are for moving TOWARD things; away from a surface a
-        # curved path does no harm.
-        self.arm.track(p, self.plan.grasp_mat, dt)
         self._cmd = None
-        if self.arm.at(p, 0.02) or self._elapsed(t) > 6.0:
+        a = self.arm
+        if self._elapsed(t) < dt * 1.5:            # first tick of the lift
+            lo, hi = a.ik.lo[0], a.ik.hi[0]
+            self._mast_goal = min(a.q_cmd[0] + self.plan.lift_pos[2]
+                                  - self.plan.grasp_pos[2], hi - 0.005)
+            self._mast_lift = self._mast_goal - a.q_cmd[0] > 0.06
+        if self._mast_lift:
+            step = self.LIFT_SPEED * dt
+            a.q_cmd[0] += float(np.clip(self._mast_goal - a.q_cmd[0], -step, step))
+            a.apply()
+            there = abs(bot.joint_position(a.joints[0]) - self._mast_goal) < 0.01
+        else:
+            a.track(self.plan.lift_pos, self.plan.grasp_mat, dt)
+            there = a.at(self.plan.lift_pos, 0.02)
+        if there or self._elapsed(t) > 6.0:
             if self.gripper.pinched_body() >= 0:
                 self._enter("stow", t)
             else:

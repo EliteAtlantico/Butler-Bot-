@@ -2,14 +2,17 @@
 """Pick-success benchmark: random placements, success rate per object.
 
     python eval_pick.py                          # 8 trials of every object
+    python eval_pick.py --vision                 # find items with the camera
     python eval_pick.py --objects remote keys -n 20
     python eval_pick.py --seed 7 --workers 4
 
 Each trial resets the home scene, drops one object at a random spot and yaw
-on its surface, parks the robot ~1 m away, and runs the Pick skill with no
-help. A trial passes only if the skill says it is holding the object AND the
-simulator agrees: the object is >= 5 cm above where it started, within 10 cm
-of the grasp site, and the robot is still standing.
+on its surface, parks the robot 1.3-1.9 m away, and runs the Pick skill with
+no help. Without --vision the skill is told where the object is; with it, it
+has to find it with the head camera. A trial passes only if the skill says
+it is holding the object AND the simulator agrees: the object is >= 5 cm
+above where it started, within 10 cm of the grasp site, and the robot is
+still standing.
 """
 from __future__ import annotations
 
@@ -30,13 +33,14 @@ FURNITURE = ("coffee_table", "side_table", "basket")
 
 
 def run_trial(job):
-    name, seed, max_time = job
+    name, seed, max_time, vision = job
     import mujoco
 
     import handwrist
     from bracketbot_sim.robot import BracketBot
     from handwrist import scenarios
-    from handwrist.skills import Pick
+    from handwrist.objects import CATALOGUE, truth_estimate
+    from handwrist.skills import Pick, truth_estimator
 
     rng = np.random.default_rng(seed)
     bot = BracketBot(xml=str(handwrist.HOME_SCENE))
@@ -45,8 +49,14 @@ def run_trial(job):
     body = mujoco.mj_name2id(m, mujoco.mjtObj.mjOBJ_BODY, name)
     start_z = float(d.xpos[body][2])
     furniture = {mujoco.mj_name2id(m, mujoco.mjtObj.mjOBJ_BODY, f) for f in FURNITURE}
+    truth = truth_estimate(m, d, CATALOGUE[name])
 
-    pick = Pick(bot, name, verbose=False)
+    if vision:
+        from handwrist.vision import CameraEstimator
+        estimator = CameraEstimator()
+    else:
+        estimator = truth_estimator
+    pick = Pick(bot, name, estimator=estimator, verbose=False)
     robot = pick.grippers["right"].robot_bodies
     grip_geom = mujoco.mj_name2id(m, mujoco.mjtObj.mjOBJ_GEOM, pick.spec.grasp_geom)
     gname = lambda g: mujoco.mj_id2name(m, mujoco.mjtObj.mjOBJ_GEOM, g) or \
@@ -78,6 +88,9 @@ def run_trial(job):
     near = float(np.linalg.norm(d.geom_xpos[grip_geom] - grasp_site))
     truth_ok = lifted > 0.05 and near < 0.10 and not bot.fallen
     plan = pick.plan
+    est = pick.first_estimate
+    est_err = (round(float(np.linalg.norm(est.center[:2] - truth.center[:2])) * 1000, 1)
+               if est is not None else None)
     out = dict(
         object=name, seed=seed, success=bool(pick.succeeded and truth_ok),
         skill_says=pick.succeeded, truth_ok=truth_ok,
@@ -85,7 +98,8 @@ def run_trial(job):
                                  if pick.succeeded else "timed out in " + pick.phase),
         sim_time=round(bot.time, 1), wall_time=round(time.time() - wall, 1),
         retries=pick.retries, lifted=round(lifted, 3), fallen=bool(bot.fallen),
-        furniture_bumps=bumps, contacts=touched,
+        furniture_bumps=bumps, contacts=touched, estimate_err_mm=est_err,
+        searched=pick._search_stops,
         failed_in=pick.history[-2][1] if pick.phase == "failed" and len(pick.history) > 1 else "",
         arm=plan.side if plan else "", grasp=plan.kind if plan else "",
         wrist_deg=round(float(np.rad2deg(plan.wrist_yaw)), 1) if plan else None,
@@ -98,8 +112,8 @@ def summarise(results):
     from handwrist.objects import CATALOGUE
 
     names = [n for n in CATALOGUE if any(r["object"] == n for r in results)]
-    lines = ["| Object | Success | Mean time | Retries | Furniture bumps | Failures |",
-             "|---|---|---|---|---|---|"]
+    lines = ["| Object | Success | Mean time | Estimate error | Retries | Furniture bumps | Failures |",
+             "|---|---|---|---|---|---|---|"]
     for n in names:
         rs = [r for r in results if r["object"] == n]
         ok = [r for r in rs if r["success"]]
@@ -108,12 +122,14 @@ def summarise(results):
             if not r["success"]:
                 fails[r["failure"]] = fails.get(r["failure"], 0) + 1
         t = np.mean([r["sim_time"] for r in ok]) if ok else float("nan")
-        lines.append(f"| {n} | {len(ok)}/{len(rs)} | {t:.1f} s | "
+        errs = [r["estimate_err_mm"] for r in rs if r["estimate_err_mm"] is not None]
+        e = f"{np.mean(errs):.0f} mm" if errs else "-"
+        lines.append(f"| {n} | {len(ok)}/{len(rs)} | {t:.1f} s | {e} | "
                      f"{sum(r['retries'] for r in rs)} | "
                      f"{sum(r['furniture_bumps'] > 0 for r in rs)} | "
                      + ("; ".join(f"{k} x{v}" for k, v in fails.items()) or "-") + " |")
     total = sum(r["success"] for r in results)
-    lines.append(f"| **all** | **{total}/{len(results)}** | | | | |")
+    lines.append(f"| **all** | **{total}/{len(results)}** | | | | | |")
     return "\n".join(lines)
 
 
@@ -127,10 +143,15 @@ def main():
     p.add_argument("--seed", type=int, default=0)
     p.add_argument("--workers", type=int, default=max(1, (os.cpu_count() or 2) - 1))
     p.add_argument("--max-time", type=float, default=90.0, help="sim seconds per trial")
-    p.add_argument("--out", default=str(HERE / "results" / "pick_eval"))
+    p.add_argument("--vision", action="store_true",
+                   help="find items with the head camera instead of being told")
+    p.add_argument("--out", default=None,
+                   help="results path stem (default results/pick_eval[_vision])")
     args = p.parse_args()
+    if args.out is None:
+        args.out = str(HERE / "results" / ("pick_eval_vision" if args.vision else "pick_eval"))
 
-    jobs = [(n, args.seed * 1000 + i, args.max_time)
+    jobs = [(n, args.seed * 1000 + i, args.max_time, args.vision)
             for n in args.objects for i in range(args.trials)]
     print(f"{len(jobs)} trials on {args.workers} workers ...")
     t0 = time.time()
@@ -150,8 +171,10 @@ def main():
     out = Path(args.out)
     out.parent.mkdir(parents=True, exist_ok=True)
     out.with_suffix(".json").write_text(json.dumps(results, indent=1))
+    how = ("found with the head camera" if args.vision
+           else "object positions from the simulator")
     out.with_suffix(".md").write_text(
-        f"# Pick evaluation\n\n{len(jobs)} trials, seed {args.seed}, "
+        f"# Pick evaluation ({how})\n\n{len(jobs)} trials, seed {args.seed}, "
         f"{args.trials} per object.\n\n{table}\n")
     print(f"wrote {out.with_suffix('.md')} and .json")
 

@@ -78,7 +78,12 @@ class GraspPlan:
 class GraspPlanner:
     MIN_REACH = 0.22                        # hand must clear the hull and wheels
     MAX_REACH = {"top": 0.36, "side": 0.44}
-    FLOOR_REACH = 0.28
+    # Reaching down to the floor shifts the CoM forward and the base creeps
+    # ~7 cm toward the item before the balance loop catches it. From 0.28 m
+    # that left the item too close for the folded arm to get down to it
+    # (floor picks 32/36); from 0.31 m the creep lands inside the arm's
+    # comfortable envelope (35/36).
+    FLOOR_REACH = 0.31
     CLEARANCE = 0.09                        # hull front to furniture edge; the
                                             # base parks to a few cm
     MAX_POS_ERR = 0.008
@@ -113,13 +118,32 @@ class GraspPlanner:
         """Ray-cast straight down from the object to find what holds it up."""
         m, d = self.bot.model, self.bot.data
         start = np.array([est.center[0], est.center[1], est.bottom_z + 0.01])
-        dist = mujoco.mj_ray(m, d, start, np.array([0.0, 0.0, -1.0]),
-                             self._ray_group, 1, est.body_id, self._ray_hit)
-        g = int(self._ray_hit[0])
-        if dist < 0 or g < 0 or m.geom_type[g] == mujoco.mjtGeom.mjGEOM_PLANE:
+        down = np.array([0.0, 0.0, -1.0])
+        for _ in range(4):
+            dist = mujoco.mj_ray(m, d, start, down, self._ray_group, 1,
+                                 est.body_id, self._ray_hit)
+            g = int(self._ray_hit[0])
+            if dist < 0 or g < 0:
+                return Support("floor", 0.0)
+            # A camera estimate carries no body id, and its bottom can sit a
+            # little low -- so the ray may hit the item itself or another loose
+            # one. Free bodies are never furniture: look through them.
+            b = m.geom_bodyid[g]
+            if m.body_jntnum[b] and m.jnt_type[m.body_jntadr[b]] == mujoco.mjtJoint.mjJNT_FREE:
+                start = start + down * (dist + 0.002)
+                continue
+            break
+        if m.geom_type[g] == mujoco.mjtGeom.mjGEOM_PLANE:
             return Support("floor", 0.0)
-        return Support("table", float(start[2] - dist), center=d.geom_xpos[g].copy(),
-                       R=d.geom_xmat[g].reshape(3, 3).copy(), half=m.geom_size[g].copy())
+        # The surface height is the TOP of what was hit, not where the ray
+        # hit it: stepping through a loose item can restart the ray inside the
+        # tabletop, which then reports its underside -- 3 cm too low, and the
+        # fingertips were driven into the table.
+        R = d.geom_xmat[g].reshape(3, 3)
+        aabb_c, aabb_h = m.geom_aabb[g, :3], m.geom_aabb[g, 3:]
+        top = float(d.geom_xpos[g][2] + (R @ aabb_c)[2] + (np.abs(R) @ aabb_h)[2])
+        return Support("table", top, center=d.geom_xpos[g].copy(),
+                       R=R.copy(), half=m.geom_size[g].copy())
 
     def _headings(self, est, support, kind):
         """(heading, reach) pairs the base could approach from."""

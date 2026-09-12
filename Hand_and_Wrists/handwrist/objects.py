@@ -27,16 +27,19 @@ class ObjectSpec:
     handle_geom: str | None = None  # keep the fingers clear of this part
     grip_at_center: bool = False  # close at mid-height (round things)
     squeeze: float = 0.02         # m the fingers are commanded past the width
+    shape: str = "round"          # "round" (upright cylinder), "box", "sphere":
+                                  # how vision reads size and axis off the points
 
 
 CATALOGUE = {
     "mug": ObjectSpec("mug", "mug_body", handle_geom="mug_handle"),
     "can": ObjectSpec("can", "can_body"),
     "bottle": ObjectSpec("bottle", "bottle_body", grasp="side"),
-    "remote": ObjectSpec("remote", "remote_body", aligned=True),
-    "keys": ObjectSpec("keys", "keys_body", aligned=True),
-    "ball": ObjectSpec("ball", "ball_body", grip_at_center=True, squeeze=0.015),
-    "box": ObjectSpec("box", "box_body", aligned=True),
+    "remote": ObjectSpec("remote", "remote_body", aligned=True, shape="box"),
+    "keys": ObjectSpec("keys", "keys_body", aligned=True, shape="box"),
+    "ball": ObjectSpec("ball", "ball_body", grip_at_center=True, squeeze=0.015,
+                       shape="sphere"),
+    "box": ObjectSpec("box", "box_body", aligned=True, shape="box"),
 }
 
 
