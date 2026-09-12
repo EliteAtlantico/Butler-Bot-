@@ -5,10 +5,14 @@
     ./run_navigation.py --viewer           # watch it in the MuJoCo viewer
     ./run_navigation.py --frames           # also dump per-frame perception PNGs
     ./run_navigation.py --detector yolo    # use the net from train_yolo.py
+    ./run_navigation.py --detector llm     # the local LLM reasons about the scene
 
 The robot spins once to map the room with its depth camera, finds the red
 column, then A*s a path around the barrier it can see and drives it --
-replanning as the map fills in.
+replanning as the map fills in. With --detector llm the "finding" is done by
+the local vision model, which looks at the head-camera frame, reasons about
+where the goal stands, and its answer is ranged with the depth image before
+the planner converts it into a route to drive.
 """
 from __future__ import annotations
 
@@ -50,23 +54,40 @@ def parse_args():
                    help="also write rgbd_frame_XX.png every few seconds")
     p.add_argument("--seed-scan", type=float, default=1.0,
                    help="turns to spin while mapping before planning")
-    p.add_argument("--detector", default="colour", choices=["colour", "yolo"],
-                   help="colour thresholding, or a YOLO net trained by "
-                        "train_yolo.py")
+    p.add_argument("--detector", default="colour",
+                   choices=["colour", "yolo", "llm"],
+                   help="colour thresholding, a YOLO net trained by train_yolo.py, "
+                        "or the local LLM (llama-server) scene reasoner")
     p.add_argument("--weights", default=None,
                    help="YOLO weights (default: runs/bracketbot_yolo/weights/best.pt)")
     p.add_argument("--conf", type=float, default=0.35, help="YOLO confidence")
+    p.add_argument("--llm-url", default="http://localhost:8080/v1",
+                   help="OpenAI-compatible base URL of the local LLM server")
+    p.add_argument("--llm-model", default="Qwen/Qwen3.8-27B",
+                   help="model name as served (default: the running llama-server)")
+    p.add_argument("--llm-period", type=float, default=3.0,
+                   help="sim seconds between LLM scene queries")
+    p.add_argument("--llm-conf", type=float, default=0.40,
+                   help="min goal confidence to accept a reasoned location")
     return p.parse_args()
 
 
 def build_detector(args):
     if args.detector == "colour":
         return None
-    from vision_sim.yolo_detector import YoloDetector
-    weights = args.weights or (HERE / "runs" / "bracketbot_yolo" /
-                               "weights" / "best.pt")
-    det = YoloDetector(weights, conf=args.conf)
-    print(f"detector: YOLO {weights} classes={list(det.names.values())}")
+    if args.detector == "yolo":
+        from vision_sim.yolo_detector import YoloDetector
+        weights = args.weights or (HERE / "runs" / "bracketbot_yolo" /
+                                   "weights" / "best.pt")
+        det = YoloDetector(weights, conf=args.conf)
+        print(f"detector: YOLO {weights} classes={list(det.names.values())}")
+        return det
+    from vision_sim.llm_reasoner import LlmGoalDetector
+    det = LlmGoalDetector(base_url=args.llm_url, model=args.llm_model,
+                          query_period=args.llm_period,
+                          min_confidence=args.llm_conf, verbose=True)
+    print(f"detector: local LLM {args.llm_url} model={args.llm_model} "
+          f"query every {args.llm_period:g} sim s")
     return det
 
 

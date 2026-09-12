@@ -186,7 +186,7 @@ def _cluster_xy(xy: np.ndarray, res: float) -> np.ndarray:
 def detect(obs: Observation, classes=DEFAULT_CLASSES, min_height: float = 0.12,
            max_height: float = 2.5, min_range: float = 0.4,
            self_radius: float = 0.55, cluster_res: float = 0.3,
-           robot_yaw: float = 0.0) -> list[Detection]:
+           robot_yaw: float = 0.0, **_) -> list[Detection]:
     """Colour-classify pixels, then cluster the survivors in 3D.
 
     `min_height` is what removes the floor, which renders the same hue as the

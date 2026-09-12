@@ -83,7 +83,9 @@ class VisualNavigator:
     def sense(self, bot, t: float = 0.0):
         self.obs = perception.observe(bot, width=self.width, height=self.height,
                                       max_range=self.max_range)
-        self.detections = self.detector(self.obs, robot_yaw=bot.yaw)
+        # Pass sim time through so time-gated detectors (e.g. the local LLM)
+        # pace themselves on the sim clock, not the wall clock.
+        self.detections = self.detector(self.obs, robot_yaw=bot.yaw, t=t)
         if len(self.detections) >= len(self.best_detections):
             self.best_obs, self.best_detections, self.best_time = (
                 self.obs, list(self.detections), t)
