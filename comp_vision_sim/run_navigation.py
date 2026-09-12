@@ -63,8 +63,12 @@ def build_detector(args):
     if args.detector == "colour":
         return None
     from vision_sim.yolo_detector import YoloDetector
-    weights = args.weights or (HERE / "runs" / "bracketbot_yolo" /
-                               "weights" / "best.pt")
+    # A fresh training run wins over the checked-in net, so retraining takes
+    # effect without passing --weights; models/ is the fallback that makes a
+    # clean clone work at all.
+    trained = HERE / "runs" / "bracketbot_yolo" / "weights" / "best.pt"
+    shipped = HERE / "models" / "bracketbot_yolo.pt"
+    weights = args.weights or (trained if trained.exists() else shipped)
     det = YoloDetector(weights, conf=args.conf)
     print(f"detector: YOLO {weights} classes={list(det.names.values())}")
     return det

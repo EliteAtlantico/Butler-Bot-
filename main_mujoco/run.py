@@ -139,6 +139,10 @@ def main():
         paused = {"v": False}
 
         def on_key(key):
+            # `algorithm` is rebound here, so it has to be declared nonlocal --
+            # without it the assignment below makes a local that dies with the
+            # callback and the step loop keeps the stale, already-run object.
+            nonlocal algorithm
             # GLFW key codes (press only; the passive bridge delivers repeats,
             # so guard against them).
             if key in (glfw.KEY_SPACE, glfw.KEY_P):
@@ -148,7 +152,7 @@ def main():
             elif key == glfw.KEY_R:
                 bot.reset()           # re-anchors odometry + LQR refs
                 algorithm = make_algorithm(args.algorithm)  # fresh clock
-                print(f"reset  t=0.00s")
+                print("reset  t=0.00s")
 
         with mujoco.viewer.launch_passive(bot.model, bot.data,
                                           key_callback=on_key) as viewer:

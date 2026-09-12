@@ -44,7 +44,14 @@ class YoloDetector:
 
     def __call__(self, obs: Observation, robot_yaw: float = 0.0,
                  **_) -> list[Detection]:
-        result = self.model.predict(obs.rgb, conf=self.conf, iou=self.iou,
+        # Ultralytics treats a raw ndarray as BGR (the OpenCV convention) but
+        # MuJoCo renders RGB. Handing it RGB silently swaps red and blue, so
+        # the red goal column classifies as a blue pillar and vice versa --
+        # with the boxes still pixel-perfect, which makes it look like a
+        # labelling bug rather than a channel bug. Training read its images
+        # from disk through cv2, so only inference was ever affected.
+        bgr = np.ascontiguousarray(obs.rgb[..., ::-1])
+        result = self.model.predict(bgr, conf=self.conf, iou=self.iou,
                                     imgsz=self.imgsz, device=self.device,
                                     verbose=False)[0]
         out: list[Detection] = []
