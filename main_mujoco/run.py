@@ -6,10 +6,9 @@
     ./run.py --algorithm avoid       # viewer, depth-camera obstacle avoidance
     ./run.py --headless -d 30 --algorithm avoid --shot cams.png
     ./run.py --cameras               # dump every camera view and exit
-    ./run.py -a vision --scene scene_nav.xml   # RGB-D detection + A* planning
 
-For the vision algorithm with a diagnostic figure of what it saw and planned,
-use ./vision_nav.py instead.
+RGB-D object detection and path planning live in ../comp_vision_sim; run
+./run_navigation.py there.
 
 In the viewer, press Tab to open the control panel; the camera dropdown there
 switches between the free camera and the robot's seven fixed cameras, so you
@@ -27,11 +26,10 @@ def parse_args():
                                 formatter_class=argparse.RawDescriptionHelpFormatter)
     p.add_argument("--algorithm", "-a", default="stand",
                    choices=["stand", "square", "avoid", "waypoints", "drive",
-                            "spin", "vision"],
+                            "spin"],
                    help="movement algorithm to run (default: stand)")
     p.add_argument("--scene", default="scene_dynamic.xml",
-                   help="scene_dynamic.xml (with props), scene_flat.xml, or "
-                        "scene_nav.xml (obstacle course for --algorithm vision)")
+                   help="scene_dynamic.xml (with props) or scene_flat.xml")
     p.add_argument("--headless", action="store_true", help="no viewer window")
     p.add_argument("--duration", "-d", type=float, default=None,
                    help="seconds to run (headless default 30, viewer unlimited)")
@@ -61,9 +59,6 @@ def make_algorithm(name):
                             alg.Drive(0.0, 0.0, 3))
     if name == "spin":
         return alg.Drive(0.0, 1.0, 1e9)
-    if name == "vision":
-        from bracketbot_sim.navigation import VisualNavigator
-        return VisualNavigator(verbose=True)
     raise ValueError(name)
 
 
