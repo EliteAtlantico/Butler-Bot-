@@ -18,6 +18,7 @@ import mujoco
 import numpy as np
 
 from .objects import CATALOGUE, set_object_pose
+from .places import reset_drops
 
 # object -> surface it is tested on
 SURFACE = {
@@ -38,6 +39,7 @@ FURNITURE = {
     "coffee_table": (1.25, 0.0, 0.30, 0.45),
     "side_table": (0.0, 1.4, 0.22, 0.22),
     "basket": (0.2, -1.3, 0.20, 0.15),
+    "person": (-1.0, 1.55, 0.20, 0.30),      # body plus outstretched arm
 }
 ROBOT_CLEAR = 0.45        # m from the base centre to any furniture edge
 
@@ -112,9 +114,33 @@ def sample(name, rng):
     raise RuntimeError(f"no clear start found for {name}")
 
 
+TIDY_ITEMS = ("mug", "can", "remote")
+
+
+def setup_tidy(bot, rng=None):
+    """The coffee table with the mug, can and remote scattered along its near
+    band (rng) or where the scene puts them (None), and the robot standing
+    in front of it. Everything else stays where the scene has it."""
+    bot.reset()
+    reset_drops()
+    if rng is not None:
+        slots = rng.permutation([-0.30, 0.0, 0.30])
+        for name, y in zip(TIDY_ITEMS, slots):
+            pos = [COFFEE_NEAR_X + rng.uniform(0.08, 0.15), y + rng.uniform(-0.06, 0.06),
+                   COFFEE_TOP + 0.0005]
+            set_object_pose(bot.model, bot.data, name, pos, float(rng.uniform(-np.pi, np.pi)))
+        robot = np.array([rng.uniform(-0.5, -0.1), rng.uniform(-0.3, 0.3)])
+        place_robot(bot, robot, float(rng.uniform(-0.2, 0.2)))
+    else:
+        place_robot(bot, [0.0, 0.0], 0.0)
+    mujoco.mj_forward(bot.model, bot.data)
+    bot.balance.enable(bot.state)
+
+
 def setup(bot, name, rng=None):
     """Reset and stage one trial. rng=None keeps the scene's own layout."""
     bot.reset()
+    reset_drops()
     if rng is not None:
         obj, yaw, robot, ryaw = sample(name, rng)
         park_others(bot, name)

@@ -1,0 +1,970 @@
+[
+ {
+  "mode": "basket",
+  "item": "mug",
+  "seed": 0,
+  "success": true,
+  "task_says": true,
+  "placed": "1/1",
+  "fallen": false,
+  "missed": [],
+  "where": {
+   "mug": [
+    0.194,
+    -1.303,
+    0.06
+   ]
+  },
+  "failure": "",
+  "sim_time": 78.2,
+  "wall_time": 56.2,
+  "steps": [
+   [
+    "pick up the mug",
+    true
+   ],
+   [
+    "put the mug in the basket",
+    true
+   ]
+  ],
+  "note": ""
+ },
+ {
+  "mode": "basket",
+  "item": "mug",
+  "seed": 1,
+  "success": true,
+  "task_says": true,
+  "placed": "1/1",
+  "fallen": false,
+  "missed": [],
+  "where": {
+   "mug": [
+    0.198,
+    -1.297,
+    0.06
+   ]
+  },
+  "failure": "",
+  "sim_time": 72.3,
+  "wall_time": 65.3,
+  "steps": [
+   [
+    "pick up the mug",
+    true
+   ],
+   [
+    "put the mug in the basket",
+    true
+   ]
+  ],
+  "note": ""
+ },
+ {
+  "mode": "basket",
+  "item": "can",
+  "seed": 0,
+  "success": true,
+  "task_says": true,
+  "placed": "1/1",
+  "fallen": false,
+  "missed": [],
+  "where": {
+   "can": [
+    0.201,
+    -1.304,
+    0.07
+   ]
+  },
+  "failure": "",
+  "sim_time": 71.0,
+  "wall_time": 42.3,
+  "steps": [
+   [
+    "pick up the can",
+    true
+   ],
+   [
+    "put the can in the basket",
+    true
+   ]
+  ],
+  "note": ""
+ },
+ {
+  "mode": "basket",
+  "item": "can",
+  "seed": 1,
+  "success": true,
+  "task_says": true,
+  "placed": "1/1",
+  "fallen": false,
+  "missed": [],
+  "where": {
+   "can": [
+    0.2,
+    -1.303,
+    0.07
+   ]
+  },
+  "failure": "",
+  "sim_time": 67.2,
+  "wall_time": 45.9,
+  "steps": [
+   [
+    "pick up the can",
+    true
+   ],
+   [
+    "put the can in the basket",
+    true
+   ]
+  ],
+  "note": ""
+ },
+ {
+  "mode": "basket",
+  "item": "bottle",
+  "seed": 0,
+  "success": true,
+  "task_says": true,
+  "placed": "1/1",
+  "fallen": false,
+  "missed": [],
+  "where": {
+   "bottle": [
+    0.204,
+    -1.247,
+    0.1
+   ]
+  },
+  "failure": "",
+  "sim_time": 81.1,
+  "wall_time": 40.2,
+  "steps": [
+   [
+    "pick up the bottle",
+    true
+   ],
+   [
+    "put the bottle in the basket",
+    true
+   ]
+  ],
+  "note": ""
+ },
+ {
+  "mode": "basket",
+  "item": "bottle",
+  "seed": 1,
+  "success": true,
+  "task_says": true,
+  "placed": "1/1",
+  "fallen": false,
+  "missed": [],
+  "where": {
+   "bottle": [
+    0.198,
+    -1.32,
+    0.1
+   ]
+  },
+  "failure": "",
+  "sim_time": 83.3,
+  "wall_time": 41.9,
+  "steps": [
+   [
+    "pick up the bottle",
+    true
+   ],
+   [
+    "put the bottle in the basket",
+    true
+   ]
+  ],
+  "note": ""
+ },
+ {
+  "mode": "basket",
+  "item": "remote",
+  "seed": 0,
+  "success": true,
+  "task_says": true,
+  "placed": "1/1",
+  "fallen": false,
+  "missed": [],
+  "where": {
+   "remote": [
+    0.201,
+    -1.298,
+    0.022
+   ]
+  },
+  "failure": "",
+  "sim_time": 71.7,
+  "wall_time": 45.0,
+  "steps": [
+   [
+    "pick up the remote",
+    true
+   ],
+   [
+    "put the remote in the basket",
+    true
+   ]
+  ],
+  "note": ""
+ },
+ {
+  "mode": "basket",
+  "item": "remote",
+  "seed": 1,
+  "success": true,
+  "task_says": true,
+  "placed": "1/1",
+  "fallen": false,
+  "missed": [],
+  "where": {
+   "remote": [
+    0.201,
+    -1.303,
+    0.022
+   ]
+  },
+  "failure": "",
+  "sim_time": 66.5,
+  "wall_time": 46.9,
+  "steps": [
+   [
+    "pick up the remote",
+    true
+   ],
+   [
+    "put the remote in the basket",
+    true
+   ]
+  ],
+  "note": ""
+ },
+ {
+  "mode": "basket",
+  "item": "keys",
+  "seed": 0,
+  "success": true,
+  "task_says": true,
+  "placed": "1/1",
+  "fallen": false,
+  "missed": [],
+  "where": {
+   "keys": [
+    0.2,
+    -1.297,
+    0.022
+   ]
+  },
+  "failure": "",
+  "sim_time": 80.1,
+  "wall_time": 51.9,
+  "steps": [
+   [
+    "pick up the keys",
+    true
+   ],
+   [
+    "put the keys in the basket",
+    true
+   ]
+  ],
+  "note": ""
+ },
+ {
+  "mode": "basket",
+  "item": "keys",
+  "seed": 1,
+  "success": false,
+  "task_says": false,
+  "placed": "0/1",
+  "fallen": false,
+  "missed": [
+   "keys"
+  ],
+  "where": {
+   "keys": [
+    -0.677,
+    -0.297,
+    0.012
+   ]
+  },
+  "failure": "ran out of time: pick up the keys: relook",
+  "sim_time": 182.0,
+  "wall_time": 81.5,
+  "steps": [],
+  "note": ""
+ },
+ {
+  "mode": "basket",
+  "item": "ball",
+  "seed": 0,
+  "success": true,
+  "task_says": true,
+  "placed": "1/1",
+  "fallen": false,
+  "missed": [],
+  "where": {
+   "ball": [
+    0.2,
+    -1.31,
+    0.045
+   ]
+  },
+  "failure": "",
+  "sim_time": 82.0,
+  "wall_time": 45.1,
+  "steps": [
+   [
+    "pick up the ball",
+    true
+   ],
+   [
+    "put the ball in the basket",
+    true
+   ]
+  ],
+  "note": ""
+ },
+ {
+  "mode": "basket",
+  "item": "ball",
+  "seed": 1,
+  "success": true,
+  "task_says": true,
+  "placed": "1/1",
+  "fallen": false,
+  "missed": [],
+  "where": {
+   "ball": [
+    0.2,
+    -1.304,
+    0.045
+   ]
+  },
+  "failure": "",
+  "sim_time": 79.2,
+  "wall_time": 35.7,
+  "steps": [
+   [
+    "pick up the ball",
+    true
+   ],
+   [
+    "put the ball in the basket",
+    true
+   ]
+  ],
+  "note": ""
+ },
+ {
+  "mode": "basket",
+  "item": "box",
+  "seed": 0,
+  "success": true,
+  "task_says": true,
+  "placed": "1/1",
+  "fallen": false,
+  "missed": [],
+  "where": {
+   "box": [
+    0.199,
+    -1.298,
+    0.035
+   ]
+  },
+  "failure": "",
+  "sim_time": 83.7,
+  "wall_time": 57.5,
+  "steps": [
+   [
+    "pick up the box",
+    true
+   ],
+   [
+    "put the box in the basket",
+    true
+   ]
+  ],
+  "note": ""
+ },
+ {
+  "mode": "basket",
+  "item": "box",
+  "seed": 1,
+  "success": true,
+  "task_says": true,
+  "placed": "1/1",
+  "fallen": false,
+  "missed": [],
+  "where": {
+   "box": [
+    0.208,
+    -1.32,
+    0.035
+   ]
+  },
+  "failure": "",
+  "sim_time": 82.7,
+  "wall_time": 49.8,
+  "steps": [
+   [
+    "pick up the box",
+    true
+   ],
+   [
+    "put the box in the basket",
+    true
+   ]
+  ],
+  "note": ""
+ },
+ {
+  "mode": "handover",
+  "item": "mug",
+  "seed": 0,
+  "success": true,
+  "task_says": true,
+  "placed": "1/1",
+  "fallen": false,
+  "missed": [],
+  "where": {
+   "mug": [
+    -0.966,
+    1.3,
+    0.677
+   ]
+  },
+  "failure": "",
+  "sim_time": 77.5,
+  "wall_time": 46.1,
+  "steps": [
+   [
+    "pick up the mug",
+    true
+   ],
+   [
+    "put the mug to the person",
+    true
+   ]
+  ],
+  "note": ""
+ },
+ {
+  "mode": "handover",
+  "item": "mug",
+  "seed": 1,
+  "success": true,
+  "task_says": true,
+  "placed": "1/1",
+  "fallen": false,
+  "missed": [],
+  "where": {
+   "mug": [
+    -0.969,
+    1.294,
+    0.677
+   ]
+  },
+  "failure": "",
+  "sim_time": 73.3,
+  "wall_time": 55.3,
+  "steps": [
+   [
+    "pick up the mug",
+    true
+   ],
+   [
+    "put the mug to the person",
+    true
+   ]
+  ],
+  "note": ""
+ },
+ {
+  "mode": "handover",
+  "item": "can",
+  "seed": 0,
+  "success": true,
+  "task_says": true,
+  "placed": "1/1",
+  "fallen": false,
+  "missed": [],
+  "where": {
+   "can": [
+    -0.973,
+    1.302,
+    0.687
+   ]
+  },
+  "failure": "",
+  "sim_time": 71.6,
+  "wall_time": 39.8,
+  "steps": [
+   [
+    "pick up the can",
+    true
+   ],
+   [
+    "put the can to the person",
+    true
+   ]
+  ],
+  "note": ""
+ },
+ {
+  "mode": "handover",
+  "item": "can",
+  "seed": 1,
+  "success": true,
+  "task_says": true,
+  "placed": "1/1",
+  "fallen": false,
+  "missed": [],
+  "where": {
+   "can": [
+    -0.972,
+    1.302,
+    0.687
+   ]
+  },
+  "failure": "",
+  "sim_time": 67.4,
+  "wall_time": 43.5,
+  "steps": [
+   [
+    "pick up the can",
+    true
+   ],
+   [
+    "put the can to the person",
+    true
+   ]
+  ],
+  "note": ""
+ },
+ {
+  "mode": "handover",
+  "item": "bottle",
+  "seed": 0,
+  "success": true,
+  "task_says": true,
+  "placed": "1/1",
+  "fallen": false,
+  "missed": [],
+  "where": {
+   "bottle": [
+    -0.974,
+    1.303,
+    0.717
+   ]
+  },
+  "failure": "",
+  "sim_time": 70.9,
+  "wall_time": 33.6,
+  "steps": [
+   [
+    "pick up the bottle",
+    true
+   ],
+   [
+    "put the bottle to the person",
+    true
+   ]
+  ],
+  "note": ""
+ },
+ {
+  "mode": "handover",
+  "item": "bottle",
+  "seed": 1,
+  "success": true,
+  "task_says": true,
+  "placed": "1/1",
+  "fallen": false,
+  "missed": [],
+  "where": {
+   "bottle": [
+    -0.972,
+    1.303,
+    0.717
+   ]
+  },
+  "failure": "",
+  "sim_time": 70.9,
+  "wall_time": 33.5,
+  "steps": [
+   [
+    "pick up the bottle",
+    true
+   ],
+   [
+    "put the bottle to the person",
+    true
+   ]
+  ],
+  "note": ""
+ },
+ {
+  "mode": "handover",
+  "item": "remote",
+  "seed": 0,
+  "success": true,
+  "task_says": true,
+  "placed": "1/1",
+  "fallen": false,
+  "missed": [],
+  "where": {
+   "remote": [
+    -0.973,
+    1.295,
+    0.639
+   ]
+  },
+  "failure": "",
+  "sim_time": 71.0,
+  "wall_time": 36.0,
+  "steps": [
+   [
+    "pick up the remote",
+    true
+   ],
+   [
+    "put the remote to the person",
+    true
+   ]
+  ],
+  "note": ""
+ },
+ {
+  "mode": "handover",
+  "item": "remote",
+  "seed": 1,
+  "success": true,
+  "task_says": true,
+  "placed": "1/1",
+  "fallen": false,
+  "missed": [],
+  "where": {
+   "remote": [
+    -0.972,
+    1.301,
+    0.639
+   ]
+  },
+  "failure": "",
+  "sim_time": 66.5,
+  "wall_time": 39.8,
+  "steps": [
+   [
+    "pick up the remote",
+    true
+   ],
+   [
+    "put the remote to the person",
+    true
+   ]
+  ],
+  "note": ""
+ },
+ {
+  "mode": "handover",
+  "item": "keys",
+  "seed": 0,
+  "success": true,
+  "task_says": true,
+  "placed": "1/1",
+  "fallen": false,
+  "missed": [],
+  "where": {
+   "keys": [
+    -0.973,
+    1.295,
+    0.639
+   ]
+  },
+  "failure": "",
+  "sim_time": 72.3,
+  "wall_time": 39.4,
+  "steps": [
+   [
+    "pick up the keys",
+    true
+   ],
+   [
+    "put the keys to the person",
+    true
+   ]
+  ],
+  "note": ""
+ },
+ {
+  "mode": "handover",
+  "item": "keys",
+  "seed": 1,
+  "success": false,
+  "task_says": false,
+  "placed": "0/1",
+  "fallen": false,
+  "missed": [
+   "keys"
+  ],
+  "where": {
+   "keys": [
+    -0.677,
+    -0.297,
+    0.012
+   ]
+  },
+  "failure": "ran out of time: pick up the keys: relook",
+  "sim_time": 182.0,
+  "wall_time": 75.8,
+  "steps": [],
+  "note": ""
+ },
+ {
+  "mode": "handover",
+  "item": "ball",
+  "seed": 0,
+  "success": true,
+  "task_says": true,
+  "placed": "1/1",
+  "fallen": false,
+  "missed": [],
+  "where": {
+   "ball": [
+    -0.972,
+    1.307,
+    0.662
+   ]
+  },
+  "failure": "",
+  "sim_time": 73.6,
+  "wall_time": 35.3,
+  "steps": [
+   [
+    "pick up the ball",
+    true
+   ],
+   [
+    "put the ball to the person",
+    true
+   ]
+  ],
+  "note": ""
+ },
+ {
+  "mode": "handover",
+  "item": "ball",
+  "seed": 1,
+  "success": true,
+  "task_says": true,
+  "placed": "1/1",
+  "fallen": false,
+  "missed": [],
+  "where": {
+   "ball": [
+    -0.975,
+    1.298,
+    0.662
+   ]
+  },
+  "failure": "",
+  "sim_time": 73.0,
+  "wall_time": 37.9,
+  "steps": [
+   [
+    "pick up the ball",
+    true
+   ],
+   [
+    "put the ball to the person",
+    true
+   ]
+  ],
+  "note": ""
+ },
+ {
+  "mode": "handover",
+  "item": "box",
+  "seed": 0,
+  "success": true,
+  "task_says": true,
+  "placed": "1/1",
+  "fallen": false,
+  "missed": [],
+  "where": {
+   "box": [
+    -0.972,
+    1.295,
+    0.652
+   ]
+  },
+  "failure": "",
+  "sim_time": 75.8,
+  "wall_time": 44.8,
+  "steps": [
+   [
+    "pick up the box",
+    true
+   ],
+   [
+    "put the box to the person",
+    true
+   ]
+  ],
+  "note": ""
+ },
+ {
+  "mode": "handover",
+  "item": "box",
+  "seed": 1,
+  "success": true,
+  "task_says": true,
+  "placed": "1/1",
+  "fallen": false,
+  "missed": [],
+  "where": {
+   "box": [
+    -0.988,
+    1.315,
+    0.652
+   ]
+  },
+  "failure": "",
+  "sim_time": 78.6,
+  "wall_time": 39.7,
+  "steps": [
+   [
+    "pick up the box",
+    true
+   ],
+   [
+    "put the box to the person",
+    true
+   ]
+  ],
+  "note": ""
+ },
+ {
+  "mode": "tidy",
+  "item": "mug+can+remote",
+  "seed": 900,
+  "success": true,
+  "task_says": true,
+  "placed": "3/3",
+  "fallen": false,
+  "missed": [],
+  "where": {
+   "mug": [
+    0.3,
+    -1.318,
+    0.071
+   ],
+   "can": [
+    0.096,
+    -1.287,
+    0.07
+   ],
+   "remote": [
+    0.204,
+    -1.301,
+    0.022
+   ]
+  },
+  "failure": "",
+  "sim_time": 221.2,
+  "wall_time": 84.8,
+  "steps": [
+   [
+    "pick up the remote",
+    true
+   ],
+   [
+    "put the remote in the basket",
+    true
+   ],
+   [
+    "pick up the can",
+    true
+   ],
+   [
+    "put the can in the basket",
+    true
+   ],
+   [
+    "pick up the mug",
+    true
+   ],
+   [
+    "put the mug in the basket",
+    true
+   ]
+  ],
+  "note": "found remote, can, mug on the coffee_table"
+ },
+ {
+  "mode": "tidy",
+  "item": "mug+can+remote",
+  "seed": 901,
+  "success": true,
+  "task_says": true,
+  "placed": "3/3",
+  "fallen": false,
+  "missed": [],
+  "where": {
+   "mug": [
+    0.105,
+    -1.303,
+    0.06
+   ],
+   "can": [
+    0.3,
+    -1.305,
+    0.07
+   ],
+   "remote": [
+    0.202,
+    -1.299,
+    0.022
+   ]
+  },
+  "failure": "",
+  "sim_time": 216.2,
+  "wall_time": 86.3,
+  "steps": [
+   [
+    "pick up the remote",
+    true
+   ],
+   [
+    "put the remote in the basket",
+    true
+   ],
+   [
+    "pick up the mug",
+    true
+   ],
+   [
+    "put the mug in the basket",
+    true
+   ],
+   [
+    "pick up the can",
+    true
+   ],
+   [
+    "put the can in the basket",
+    true
+   ]
+  ],
+  "note": "found remote, mug, can on the coffee_table"
+ }
+]

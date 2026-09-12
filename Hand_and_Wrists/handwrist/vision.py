@@ -55,6 +55,18 @@ class ColourWindow:
         inside = (h >= lo) & (h <= hi) if lo <= hi else (h >= lo) | (h <= hi)
         return inside & (s >= self.sat_min) & (v >= self.val_min)
 
+    @property
+    def center(self):
+        """Middle of the hue window, in degrees (handles the 0/360 wrap)."""
+        lo, hi = self.hue
+        span = (hi - lo) % 360.0
+        return (lo + span / 2) % 360.0
+
+
+def _hue_dist(h, c):
+    d = np.abs(h - c) % 360.0
+    return np.minimum(d, 360.0 - d)
+
 
 def load_colours(path=COLOURS_FILE) -> dict[str, ColourWindow]:
     if not path.exists():
@@ -123,7 +135,18 @@ class CameraEstimator:
     # -------------------------------------------------------------- segment
     def sight(self, obs, spec: ObjectSpec) -> Sighting | None:
         win = self.colours[spec.name]
-        sel = win.mask(rgb_to_hsv(obs.rgb)) & obs.valid
+        hsv = rgb_to_hsv(obs.rgb)
+        sel = win.mask(hsv) & obs.valid
+        # Calibrated windows overlap at the edges -- the ball's pink runs into
+        # the mug's red and the remote's purple -- and a tidy-up "found" a
+        # ball on the coffee table that was really the mug. A pixel two
+        # windows claim goes to the item whose window centre is nearer.
+        own = _hue_dist(hsv[..., 0], win.center)
+        for other, w in self.colours.items():
+            if other != spec.name:
+                both = sel & w.mask(hsv)
+                if both.any():
+                    sel &= ~(both & (_hue_dist(hsv[..., 0], w.center) < own))
         # the robot's own arms are close to the camera; items never are
         sel &= np.linalg.norm(obs.points[..., :2] - obs.robot_xy, axis=-1) > self.self_radius
         if sel.sum() < self.min_points:

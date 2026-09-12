@@ -95,6 +95,7 @@ class GraspPlanner:
         self.scratch = mujoco.MjData(m)
         self.ik = {s: ArmIK(m, s) for s in ("right", "left")}
         self.max_gap = Gripper(bot, "right").max_gap
+        self.low_obstacles = self._low_obstacles()
 
         hull = mujoco.mj_name2id(m, mujoco.mjtObj.mjOBJ_GEOM, "col_base_hull")
         self.hull_front = float(m.geom_pos[hull][0] + m.geom_size[hull][0])
@@ -193,7 +194,7 @@ class GraspPlanner:
         grasp = np.array([est.center[0], est.center[1], z])
 
         here, yaw_now = bot.position[:2], bot.yaw
-        plans = []
+        candidates = []
         for heading, reach in self._headings(est, support, kind):
             hvec = np.array([np.cos(heading), np.sin(heading)])
             lvec = np.array([-hvec[1], hvec[0]])
@@ -217,30 +218,95 @@ class GraspPlanner:
             lift = grasp + np.array([0.0, 0.0, LIFT_H])
 
             for side in sides:
-                base_xy = grasp[:2] - hvec * reach - lvec * self.lateral[side]
-                err = self._check_ik(side, base_xy, heading, (pre, grasp, lift), mat)
-                if err is None:
-                    continue
-                # Turning is what a differential drive pays for: turn to face
-                # the parking spot, drive, turn to the grasp heading. Scoring
-                # only the final heading against the current one prefers spots
-                # that need a U-turn on arrival. A long reach costs balance.
-                dist = float(np.linalg.norm(base_xy - here))
-                if dist > 0.15:
-                    bearing = float(np.arctan2(*(base_xy - here)[::-1]))
-                    turn = abs(_wrap(bearing - yaw_now)) + abs(_wrap(heading - bearing))
-                else:
-                    turn = abs(_wrap(heading - yaw_now))
-                cost = (dist + 0.35 * turn + 1.5 * reach + 0.3 * abs(wrist)
-                        + 20.0 * err + (0.02 if side == "left" else 0.0))
-                plans.append(GraspPlan(
-                    name=est.name, side=side, kind=kind, base_xy=base_xy,
-                    base_yaw=heading, grasp_pos=grasp, grasp_mat=mat,
-                    pregrasp_pos=pre, lift_pos=lift, open_gap=open_gap,
-                    close_gap=close_gap, wrist_yaw=wrist, reach=reach,
-                    ik_err=err, cost=cost))
+                natural = grasp[:2] - hvec * reach - lvec * self.lateral[side]
+                for shift in self.LATERAL_SHIFTS:
+                    base_xy = natural + lvec * shift
+                    # Turning is what a differential drive pays for: turn to
+                    # face the parking spot, drive, turn to the grasp heading.
+                    # Scoring only the final heading against the current one
+                    # prefers spots that need a U-turn on arrival. A long
+                    # reach costs balance; a sideways shift costs reach.
+                    dist = float(np.linalg.norm(base_xy - here))
+                    if dist > 0.15:
+                        bearing = float(np.arctan2(*(base_xy - here)[::-1]))
+                        turn = abs(_wrap(bearing - yaw_now)) + abs(_wrap(heading - bearing))
+                    else:
+                        turn = abs(_wrap(heading - yaw_now))
+                    cost = (dist + 0.35 * turn + 1.5 * reach + 0.3 * abs(wrist)
+                            + 1.0 * abs(shift) + (0.02 if side == "left" else 0.0)
+                            + (0.0 if self.creep_clear(base_xy, heading) else self.BLOCKED_COST))
+                    candidates.append((cost, side, heading, reach, base_xy, mat,
+                                       pre, lift, wrist))
+
+        # IK is the expensive check: run it cheapest-first and stop early
+        candidates.sort(key=lambda c: c[0])
+        plans = []
+        for cost, side, heading, reach, base_xy, mat, pre, lift, wrist in candidates:
+            err = self._check_ik(side, base_xy, heading, (pre, grasp, lift), mat)
+            if err is None:
+                continue
+            plans.append(GraspPlan(
+                name=est.name, side=side, kind=kind, base_xy=base_xy,
+                base_yaw=heading, grasp_pos=grasp, grasp_mat=mat,
+                pregrasp_pos=pre, lift_pos=lift, open_gap=open_gap,
+                close_gap=close_gap, wrist_yaw=wrist, reach=reach,
+                ik_err=err, cost=cost + 20.0 * err))
+            if len(plans) >= self.MAX_FEASIBLE:
+                break
         plans.sort(key=lambda p: p.cost)
         return plans[:max_plans] if max_plans else plans
+
+    # ------------------------------------------------------- base creep room
+    # While the arm works the base creeps forward -- 8-20 cm measured on table
+    # picks, as the balance loop answers the arm's CoM shift -- and it runs
+    # under a tabletop (0.37 m up, above the 0.29 m hull) until it meets a
+    # LEG. Pressed against a leg, a balancing robot cannot back off (it has to
+    # roll forward to lean back, and the leg is in the way), so everything
+    # after the pick failed. Parking spots whose creep corridor holds
+    # anything low are penalised, and sideways-shifted spots are offered so
+    # the base can sit clear of a corner leg while the arm reaches across.
+    CREEP = 0.20            # m of forward creep to leave room for
+    HULL_TOP = 0.30         # m: scenery lower than this can hit the base
+    LATERAL_SHIFTS = (0.0, 0.06, -0.06, 0.12, -0.12)
+    BLOCKED_COST = 5.0
+    MAX_FEASIBLE = 4        # stop IK-checking once this many plans pass
+
+    def _low_obstacles(self):
+        """(lo_xy, hi_xy, body) of every fixed geom low enough to hit the base."""
+        m, d = self.bot.model, self.bot.data
+        out = []
+        for g in range(m.ngeom):
+            b = m.geom_bodyid[g]
+            if m.geom_type[g] == mujoco.mjtGeom.mjGEOM_PLANE or m.body_weldid[b] != 0:
+                continue
+            R = d.geom_xmat[g].reshape(3, 3)
+            c = d.geom_xpos[g] + R @ m.geom_aabb[g, :3]
+            h = np.abs(R) @ m.geom_aabb[g, 3:]
+            if c[2] - h[2] < self.HULL_TOP and c[2] + h[2] > 0.01:
+                out.append(((c - h)[:2], (c + h)[:2], int(b)))
+        return out
+
+    def creep_clear(self, base_xy, heading, exclude_body=-1):
+        """Is the strip the base could creep into, parked here, free of low
+        scenery? Strip: the hull's width, from its back to CREEP past its nose."""
+        c, s = np.cos(heading), np.sin(heading)
+        x0, x1 = -0.12, self.hull_front + self.CREEP
+        y0, y1 = -0.20, 0.20
+        R = np.array([[c, -s], [s, c]])
+        corners = [np.asarray(base_xy) + R @ np.array(p)
+                   for p in ((x0, y0), (x0, y1), (x1, y0), (x1, y1))]
+        for lo, hi, b in self.low_obstacles:
+            if b == exclude_body:
+                continue
+            pts = [lo, hi, np.array([lo[0], hi[1]]), np.array([hi[0], lo[1]]), (lo + hi) / 2]
+            for p in pts:
+                q = R.T @ (p - base_xy)
+                if x0 <= q[0] <= x1 and y0 <= q[1] <= y1:
+                    return False
+            for p in corners:
+                if np.all(p >= lo) and np.all(p <= hi):
+                    return False
+        return True
 
     def reachable_from_here(self, plan):
         """Can the plan's arm reach every target from where the base is now?"""

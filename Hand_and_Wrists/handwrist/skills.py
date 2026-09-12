@@ -68,6 +68,39 @@ def truth_estimator(bot, spec):
     return truth_estimate(bot.model, bot.data, spec)
 
 
+def _start_nudge(bot, bias, until):
+    """Bias the balance loop's lean target by `bias` rad until sim time `until`.
+
+    The state lives on the balance controller itself, not on whoever started
+    it, so it cannot be orphaned: an approach that timed out mid-nudge once
+    left a +0.08 rad bias behind, and the robot ran away at 0.8 m/s leaning
+    4.7 deg until it was 5 m across the room. `expire_nudge` runs every skill
+    tick and drops it on time whoever owns it.
+    """
+    b = bot.balance
+    if getattr(b, "_hw_saved_limit", None) is None:
+        b._hw_saved_limit = b.trim_limit
+    b.trim_limit = max(b._hw_saved_limit, abs(bias))
+    b.trim_integral = bias
+    b._hw_nudge_until = until
+    b._hw_nudge_bias = bias
+
+
+def expire_nudge(bot, force=False):
+    """Drop a lean bias whose time is up (or any, with force)."""
+    b = bot.balance
+    until = getattr(b, "_hw_nudge_until", None)
+    if until is not None and (force or bot.time >= until):
+        b.trim_integral = 0.0
+        b.trim_limit = b._hw_saved_limit
+        b._hw_nudge_until = None
+        b._hw_saved_limit = None
+
+
+def nudging(bot):
+    return getattr(bot.balance, "_hw_nudge_until", None) is not None
+
+
 def turn_in_place(bot, target, x_hold):
     """One tick of an on-the-spot turn to world yaw `target`, holding the
     base at odometry `x_hold`. True once there.
@@ -123,6 +156,25 @@ class ApproachPose:
     BRAKE_TIME = 1.4     # s: measured stopping distance / speed is 1.2 s at
                          # steady speed; more while still accelerating
     CRUISE, CREEP = 0.25, 0.10
+    UNSTICK = 0.25       # m to reverse when a turn is jammed against something
+    STUCK_AFTER = 2.5    # s of a turn making no progress
+    # Escaping a jam. To reverse, a balancing robot first leans back -- by
+    # rolling its wheels FORWARD for a moment. With a table leg against the
+    # hull that first roll is blocked, it never leans, so it never reverses:
+    # measured, the wheels sat at 0 rad/s while the controller's forward
+    # torque pressed the hull into the leg harder and harder (17 -> 29 N).
+    # So when the wheels have been stalled JAM_AFTER s, bias the balance
+    # target to lean the OTHER way for NUDGE_TIME s: to tip forward it rolls
+    # the wheels back, which is the direction we wanted to go.
+    JAM_AFTER = 1.0
+    NUDGE = 0.08         # rad of lean bias
+    NUDGE_TIME = 0.6
+    # A jam is stalled AND touching fixed scenery. Stalled alone is also what
+    # a slow creep from standstill looks like for a moment, and nudging then
+    # made the base surge and overshoot into the basket. Pressed against
+    # scenery within CLOSE_ENOUGH of the goal just means it arrived: the
+    # arm tracks world targets and absorbs the few cm.
+    CLOSE_ENOUGH = 0.12
 
     def __init__(self, goal_xy, goal_yaw, pos_tol=0.04, yaw_tol=0.05):
         self.goal = np.asarray(goal_xy, float)
@@ -134,6 +186,64 @@ class ApproachPose:
         self._brake_ref = None
         self._still_since = None
         self._brakes = 0
+        self._turn_watch = None      # (time, yaw) a turn last made progress
+        self._unstick = None         # (goal_xy, yaw) while reversing out
+        self.unsticks = 0
+        self._jam_since = None
+        self.nudges = 0
+        self._robot = None           # robot body ids, found on first use
+
+    def _touching_scenery(self, bot):
+        """Is any part of the robot pressed against fixed scenery? Floors,
+        and loose items (the one it is holding included), don't count."""
+        m, d = bot.model, bot.data
+        if self._robot is None:
+            root = mujoco.mj_name2id(m, mujoco.mjtObj.mjOBJ_BODY, "chassis")
+            self._robot = {root}
+            for b in range(root + 1, m.nbody):
+                if m.body_parentid[b] in self._robot:
+                    self._robot.add(b)
+        for i in range(d.ncon):
+            g1, g2 = d.contact[i].geom1, d.contact[i].geom2
+            r1, r2 = m.geom_bodyid[g1] in self._robot, m.geom_bodyid[g2] in self._robot
+            if r1 == r2:
+                continue
+            wg = g2 if r1 else g1
+            if m.geom_type[wg] == mujoco.mjtGeom.mjGEOM_PLANE:
+                continue
+            if m.body_weldid[m.geom_bodyid[wg]] != 0:      # moves: an item
+                continue
+            return True
+        return False
+
+    def _clear_nudge(self, bot):
+        """Drop any lean bias. Must run whenever driving stops -- a bias left
+        in the balance loop keeps the robot leaning after it has parked."""
+        expire_nudge(bot, force=True)
+        self._jam_since = None
+
+    def _escape_jam(self, bot, sgn, e):
+        """Called while driving. True = pressed against scenery close enough
+        to the goal to call it parked; otherwise lean-nudges out of a jam."""
+        b, now = bot.balance, bot.time
+        if nudging(bot):
+            expire_nudge(bot)
+            if nudging(bot):
+                b.trim_integral = b._hw_nudge_bias   # hold it against auto-trim
+            else:
+                self._jam_since = None
+            return False
+        stalled = abs(float(np.mean(bot.wheel_rates))) < 0.05 and bot.ground_speed < 0.01
+        if not stalled or not self._touching_scenery(bot):
+            self._jam_since = None
+        elif self._jam_since is None:
+            self._jam_since = now
+        elif now - self._jam_since > self.JAM_AFTER:
+            if abs(e) < self.CLOSE_ENOUGH:
+                return True
+            _start_nudge(bot, -sgn * self.NUDGE, now + self.NUDGE_TIME)
+            self.nudges += 1
+        return False
 
     def error(self, bot):
         return (float(np.linalg.norm(self.goal - bot.position[:2])),
@@ -141,10 +251,39 @@ class ApproachPose:
 
     # -- primitives -----------------------------------------------------------
     def _turn(self, bot, target):
-        """Turn on the spot to `target`. True when there."""
+        """Turn on the spot to `target`. True when there.
+
+        Watches for a jammed turn: after a pick the base can stand beside a
+        table leg, and turning on the spot there pins the hull against the
+        leg with the yaw frozen (it sat at -70 deg for 40 s). No progress for
+        STUCK_AFTER s -> reverse UNSTICK m and start over.
+        """
+        self._clear_nudge(bot)
         if self._x_hold is None:
             self._x_hold = bot.odometry          # don't wander while turning
-        return turn_in_place(bot, target, self._x_hold)
+        now, yaw = bot.time, bot.yaw
+        if self._turn_watch is None or abs(_wrap(yaw - self._turn_watch[1])) > 0.05:
+            self._turn_watch = (now, yaw)
+        elif now - self._turn_watch[0] > self.STUCK_AFTER:
+            if abs(_wrap(target - yaw)) < 0.15:
+                # Stalled a few degrees short: that is the tyre-scrub dead
+                # band (worse with an arm out), not an obstacle. Good enough --
+                # the arm tracks world targets. Reversing out here looped the
+                # box hand-over until it timed out.
+                self._turn_watch = None
+                bot.drive(0.0, 0.0)
+                bot.balance.yaw_ref = yaw
+                return True
+            h = np.array([np.cos(yaw), np.sin(yaw)])
+            self._unstick = (bot.position[:2] - h * self.UNSTICK, yaw)
+            self._turn_watch = None
+            self.unsticks += 1
+            self.stage = "unstick"
+            return False
+        done = turn_in_place(bot, target, self._x_hold)
+        if done:
+            self._turn_watch = None
+        return done
 
     def _drive(self, bot, point, line_yaw=None, tol=None, max_speed=None):
         """Drive to `point`, heading at it -- or, given `line_yaw`, along that
@@ -156,6 +295,7 @@ class ApproachPose:
         e = float(d @ np.array([np.cos(bot.yaw), np.sin(bot.yaw)]))  # along the nose
 
         if self._brake_ref is not None:
+            self._clear_nudge(bot)
             bot.drive(0.0, 0.0)
             bot.balance.x_ref = self._brake_ref
             # Stopped means STAYING stopped: the base passes through zero
@@ -192,12 +332,23 @@ class ApproachPose:
         if max_speed is not None:
             speed = min(speed, max_speed)
         bot.drive(sgn * speed, float(np.clip(1.8 * _wrap(want - bot.yaw), -0.6, 0.6)))
+        if self._escape_jam(bot, sgn, e):
+            self._clear_nudge(bot)
+            bot.drive(0.0, 0.0)
+            bot.balance.x_ref = bot.odometry
+            return True
         return False
 
     def __call__(self, bot):
         """One tick. Returns True once parked."""
         here = bot.position[:2]
         entry = self.goal - self.ENTRY * self.h
+
+        if self.stage == "unstick":
+            goal, yaw = self._unstick
+            if self._drive(bot, goal, yaw, tol=0.06):
+                self.stage = "turn1"
+            return False
 
         if self.stage == "turn1":
             d = entry - here
@@ -247,42 +398,37 @@ class ApproachPose:
         return False
 
 
-class Pick:
-    PHASES = ("plan", "search", "relook", "approach", "settle", "pregrasp",
-              "insert", "close", "lift", "stow", "verify", "backoff", "done",
-              "failed")
-    # the head camera's blind zone: how far back to stand to see the item again
-    RELOOK_RANGE = {"floor": 1.45, "raised": 1.15}
-    SEARCH_STEP = np.deg2rad(40.0)    # a 58 deg-wide camera: overlapping looks
-    SEARCH_STOPS = 9                  # a full turn
+class ArmSkill:
+    """Shared machinery for a skill that drives the base and works one arm.
 
-    def __init__(self, bot, name, estimator=truth_estimator, sides=("right", "left"),
-                 max_retries=2, control_period=0.02, verbose=True):
-        if name not in CATALOGUE:
-            raise KeyError(f"unknown object {name!r}; know {sorted(CATALOGUE)}")
+    A skill is a phase state machine run as an ordinary `f(bot, t)`
+    controller: each control tick calls `self._<phase>(bot, t, dt)`.
+    Subclasses provide the phases and `arm` / `gripper` properties for the
+    arm in use. This class provides what every such skill needs, each part
+    of which was a benchmark failure first: straight-line hand motion, arms
+    home before driving, and a stiffer balance hold while the arm is out.
+    """
+
+    TAG = "skill"
+
+    def __setattr__(self, name, value):
+        # Phases are dispatched by name (self._<phase>), so state stored under
+        # a phase's name replaces the method and the next tick calls None --
+        # a mistake made twice here already. Refuse it where it happens.
+        if not callable(value) and callable(getattr(type(self), name, None)):
+            raise AttributeError(f"{type(self).__name__}.{name} is a method; "
+                                 f"store state under another name")
+        super().__setattr__(name, value)
+
+    def __init__(self, bot, arms, grippers, label, control_period=0.02, verbose=True):
         self.bot = bot
-        self.spec = CATALOGUE[name]
-        self.estimator = estimator
-        self.sides = sides
-        self.planner = GraspPlanner(bot)
-        self.arms = {s: ArmController(bot, s) for s in ("right", "left")}
-        self.grippers = {s: Gripper(bot, s) for s in ("right", "left")}
-        self.max_retries = max_retries
+        self.arms = arms
+        self.grippers = grippers
+        self.label = label
         self.control_period = control_period
         self.verbose = verbose
-
         self.phase = "plan"
-        self.plan = None
-        self.estimate = None
-        self.first_estimate = None   # the estimate the first plan was made on
-        self._search_target = None
-        self._search_hold = None
-        self._search_stops = 0
-        self._relooked = False
-        self._relook_job = None          # (goal_xy, mover) while backing up
         self.failure = None
-        self.retries = 0
-        self._reparks = 0
         self.history = []            # (time, phase)
         self._t0 = None
         self._next_tick = -np.inf
@@ -290,7 +436,6 @@ class Pick:
         self._manip = False
         self._cmd = None             # straight-line hand target (pos, mat)
 
-    # ------------------------------------------------------------- helpers
     @property
     def done(self):
         return self.phase in ("done", "failed")
@@ -300,19 +445,18 @@ class Pick:
         return self.phase == "done"
 
     @property
-    def arm(self):
-        return self.arms[self.plan.side]
-
-    @property
-    def gripper(self):
-        return self.grippers[self.plan.side]
+    def status(self):
+        """One line for a UI or voice front end: what it is doing now."""
+        if self.phase == "failed":
+            return f"{self.label}: failed ({self.failure})"
+        return f"{self.label}: {self.phase}"
 
     def _enter(self, phase, t, note=""):
         self.phase = phase
         self._t0 = t
         self.history.append((t, phase))
         if self.verbose:
-            print(f"    [{t:6.1f}s] {phase:9s} {note}")
+            print(f"    [{t:6.1f}s] {self.TAG:5s} {phase:9s} {note}")
 
     def _elapsed(self, t):
         return t - self._t0
@@ -337,16 +481,6 @@ class Pick:
         self.failure = reason
         self._manipulating(False)
         self._enter("failed", t, reason)
-
-    def _retry(self, reason, t):
-        self.retries += 1
-        if self.retries > self.max_retries:
-            self._fail(reason, t)
-            return
-        self.arm.set_gripper(self.gripper.q_for_gap(self.plan.open_gap))
-        self._relooked = False               # a fresh look is allowed per retry
-        self._backoff_to = self.arm.grasp_pose[0] + np.array([0.0, 0.0, 0.10])
-        self._enter("backoff", t, f"{reason}, retry {self.retries}/{self.max_retries}")
 
     def _track(self, target, mat, dt, speed=HAND_SPEED):
         """Move the hand toward a world pose along a straight line.
@@ -387,17 +521,6 @@ class Pick:
             home &= bool(np.all(np.abs(q) < 0.08))
         return home
 
-    def _stow_target(self):
-        bot = self.bot
-        h = np.array([np.cos(bot.yaw), np.sin(bot.yaw)])
-        l = np.array([-h[1], h[0]])
-        xy = bot.position[:2] + STOW_FWD * h + self.planner.lateral[self.plan.side] * l
-        mat = rot_z(_wrap(bot.yaw - self.plan.base_yaw)) @ self.plan.grasp_mat
-        # never carry it lower than it was lifted: off a 0.6 m side table the
-        # lift already ends above STOW_Z, and stowing would put it back down
-        z = max(STOW_Z, float(self.plan.lift_pos[2]))
-        return np.array([xy[0], xy[1], z]), mat
-
     # ---------------------------------------------------------------- tick
     def __call__(self, bot, t):
         if t < self._next_tick - self.control_period:   # sim was reset
@@ -409,9 +532,81 @@ class Pick:
         if self._t0 is None:
             self._t0 = t
 
+        expire_nudge(bot)                    # never let a lean bias outlive its time
         if bot.fallen and not self.done:
             self._fail("fell over", t)
         getattr(self, f"_{self.phase}")(bot, t, dt)
+
+
+
+class Pick(ArmSkill):
+    """Find an item, park where it can be reached, and pick it up.
+
+    Phases: plan -> (search / relook) -> approach -> settle -> pregrasp ->
+    insert -> close -> lift -> stow -> verify -> done, with backoff and a
+    fresh plan after a failed grasp.
+    """
+
+    TAG = "pick"
+    PHASES = ("plan", "search", "relook", "approach", "settle", "pregrasp",
+              "insert", "close", "lift", "stow", "verify", "backoff", "done",
+              "failed")
+    # the head camera's blind zone: how far back to stand to see the item again
+    RELOOK_RANGE = {"floor": 1.45, "raised": 1.15}
+    SEARCH_STEP = np.deg2rad(40.0)    # a 58 deg-wide camera: overlapping looks
+    SEARCH_STOPS = 9                  # a full turn
+
+    def __init__(self, bot, name, estimator=truth_estimator, sides=("right", "left"),
+                 max_retries=2, control_period=0.02, verbose=True):
+        if name not in CATALOGUE:
+            raise KeyError(f"unknown object {name!r}; know {sorted(CATALOGUE)}")
+        super().__init__(bot, {s: ArmController(bot, s) for s in ("right", "left")},
+                         {s: Gripper(bot, s) for s in ("right", "left")},
+                         f"pick up the {name}", control_period, verbose)
+        self.spec = CATALOGUE[name]
+        self.estimator = estimator
+        self.sides = sides
+        self.planner = GraspPlanner(bot)
+        self.max_retries = max_retries
+        self.plan = None
+        self.estimate = None
+        self.first_estimate = None   # the estimate the first plan was made on
+        self._search_target = None
+        self._search_hold = None
+        self._search_stops = 0
+        self._relooked = False
+        self._relook_job = None      # (goal_xy, mover) while backing up
+        self.retries = 0
+        self._reparks = 0
+
+    @property
+    def arm(self):
+        return self.arms[self.plan.side]
+
+    @property
+    def gripper(self):
+        return self.grippers[self.plan.side]
+
+    def _retry(self, reason, t):
+        self.retries += 1
+        if self.retries > self.max_retries:
+            self._fail(reason, t)
+            return
+        self.arm.set_gripper(self.gripper.q_for_gap(self.plan.open_gap))
+        self._relooked = False               # a fresh look is allowed per retry
+        self._backoff_to = self.arm.grasp_pose[0] + np.array([0.0, 0.0, 0.10])
+        self._enter("backoff", t, f"{reason}, retry {self.retries}/{self.max_retries}")
+
+    def _stow_target(self):
+        bot = self.bot
+        h = np.array([np.cos(bot.yaw), np.sin(bot.yaw)])
+        l = np.array([-h[1], h[0]])
+        xy = bot.position[:2] + STOW_FWD * h + self.planner.lateral[self.plan.side] * l
+        mat = rot_z(_wrap(bot.yaw - self.plan.base_yaw)) @ self.plan.grasp_mat
+        # never carry it lower than it was lifted: off a 0.6 m side table the
+        # lift already ends above STOW_Z, and stowing would put it back down
+        z = max(STOW_Z, float(self.plan.lift_pos[2]))
+        return np.array([xy[0], xy[1], z]), mat
 
     # --------------------------------------------------------------- phases
     def _plan(self, bot, t, dt):
