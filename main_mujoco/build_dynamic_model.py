@@ -213,9 +213,31 @@ def build():
                   density="0", rgba="0.1 0.1 0.1 0.6",
                   friction="1.6 0.01 0.001", condim="4",
                   solref="0.005 1", priority="2")
+    pad = ET.SubElement(dflt, "default", {"class": "pad"})
+    ET.SubElement(pad, "geom", contype="1", conaffinity="1", group="3",
+                  density="0", rgba="0.2 0.8 0.4 0.6",
+                  friction="2.5 0.05 0.005", condim="4", priority="3",
+                  solref="0.004 1", solimp="0.95 0.99 0.001")
+    # Arm servo gains are sized to actually HOLD the arm, not just suggest a
+    # position to it. At kp=150 the mast sagged 0.27 m below its command under
+    # the arm's own 2.4 kg and the grasp site sat 0.4 m below where IK thought
+    # it was, which no amount of closed-loop IK can recover from.
     arm = ET.SubElement(dflt, "default", {"class": "arm"})
-    ET.SubElement(arm, "joint", damping="2.0", armature="0.05", frictionloss="0.1")
-    ET.SubElement(arm, "position", kp="150", kv="12", forcerange="-60 60")
+    ET.SubElement(arm, "joint", damping="4.0", armature="0.05", frictionloss="0.1")
+    ET.SubElement(arm, "position", kp="800", kv="60", forcerange="-150 150")
+    # The mast is prismatic and carries the entire arm, so it needs stiffness in
+    # N/m, not Nm/rad.
+    mast = ET.SubElement(dflt, "default", {"class": "mast"})
+    ET.SubElement(mast, "joint", damping="60", armature="0.5", frictionloss="1.0")
+    ET.SubElement(mast, "position", kp="6000", kv="400", forcerange="-400 400")
+    # The gripper needs its own, much softer servo. On the arm class a 7 deg
+    # squeeze command turns into ~10 Nm at the finger hinge, which is ~100 N at
+    # the pad -- enough to fire a 45 mm cube across the room instead of holding
+    # it.
+    grip = ET.SubElement(dflt, "default", {"class": "gripper"})
+    ET.SubElement(grip, "joint", damping="0.4", armature="0.01",
+                  frictionloss="0.02")
+    ET.SubElement(grip, "position", kp="35", kv="1.5", forcerange="-12 12")
 
     wb = ET.SubElement(root, "worldbody")
     chassis = ET.SubElement(wb, "body", name="chassis", pos="0 0 0")
@@ -350,14 +372,26 @@ def build():
         inert.set("mass", f"{float(inert.get('mass')) * arm_scale:.6g}")
         di = np.array([float(x) for x in inert.get("diaginertia").split()])
         inert.set("diaginertia", fmt(di * arm_scale))
+    MAST_JOINTS = {"rj0", "lj0"}
     for jnt in arm_el.iter("joint"):
-        jnt.set("class", "arm")
+        n = jnt.get("name")
+        jnt.set("class", "gripper" if "gripper" in n
+                else "mast" if n in MAST_JOINTS else "arm")
+        # The URDF carries <limit effort="10"> on every arm joint, which the
+        # importer turns into actuatorfrcrange="-10 10". That is a per-JOINT cap
+        # applied on top of whatever the actuator asks for, and it is below the
+        # 11.8 N the mast needs just to hold the arm against gravity -- so the
+        # arm sinks at constant velocity with its actuator pinned at the limit,
+        # no matter how the servo is tuned. Drop it and let each actuator's own
+        # forcerange govern.
+        jnt.attrib.pop("actuatorfrcrange", None)
 
-    # collision capsules on the parts that can actually hit something
+    # collision boxes on the parts that can actually hit something. The fingers
+    # are deliberately NOT in this list: an AABB of a whole finger is 126 mm
+    # long and the two of them interpenetrate at the closed position, so the
+    # gripper spends its torque fighting itself. They get fingertip pads below.
     ARM_COLLIDE = ["forearm__forearm", "l_forearm__forearm", "hand__hand",
-                   "l_hand__hand", "left_finger__left_finger",
-                   "right_finger__right_finger", "l_left_finger__left_finger",
-                   "l_right_finger__right_finger"]
+                   "l_hand__hand"]
     for bname in ARM_COLLIDE:
         el = arm_el.find(f".//body[@name='{bname}']")
         if el is None:
@@ -369,6 +403,63 @@ def build():
             "class": "collision", "name": f"col_{bname}", "type": "box",
             "pos": fmt(c), "size": fmt(np.maximum(h, 2e-3)),
         })
+
+
+    # ---- fingertip pads + grasp sites -----------------------------------
+    # Small world-axis-aligned pads at the measured fingertips, thin enough in
+    # the gripping direction to leave a gap when the gripper is closed, with
+    # high friction so a grasp holds by friction rather than by a cheat weld.
+    FINGERS = {
+        "right": ("left_finger__left_finger", "right_finger__right_finger",
+                  "hand__hand"),
+        "left": ("l_left_finger__left_finger", "l_right_finger__right_finger",
+                 "l_hand__hand"),
+    }
+    PAD_HALF = np.array([0.020, 0.005, 0.018])   # x fwd, y grip, z along finger
+
+    def fingertip_world(body_name, depth=0.012):
+        """Centroid of the last `depth` metres of a finger, in world coords."""
+        b = bid(body_name)
+        pts = []
+        for g in range(model.ngeom):
+            if model.geom_bodyid[g] != b or model.geom_dataid[g] < 0:
+                continue
+            mid = model.geom_dataid[g]
+            va, vn = model.mesh_vertadr[mid], model.mesh_vertnum[mid]
+            V = model.mesh_vert[va:va + vn].reshape(-1, 3)
+            pts.append(V @ data.geom_xmat[g].reshape(3, 3).T + data.geom_xpos[g])
+        P = np.vstack(pts)
+        return P[P[:, 2] < P[:, 2].min() + depth].mean(0)
+
+    for side, (fa, fb, hand) in FINGERS.items():
+        tips = []
+        for fname in (fa, fb):
+            tip = fingertip_world(fname)
+            tips.append(tip)
+            b = bid(fname)
+            R = data.xmat[b].reshape(3, 3)
+            el = arm_el.find(f".//body[@name='{fname}']")
+            inv_quat = np.zeros(4)
+            mujoco.mju_mat2Quat(inv_quat, R.T.flatten())
+            ET.SubElement(el, "geom", {
+                "class": "pad", "name": f"pad_{fname}", "type": "box",
+                "pos": fmt(R.T @ (tip - data.xpos[b])),
+                "quat": fmt(inv_quat), "size": fmt(PAD_HALF),
+            })
+        # grasp site: midway between the fingertips, on the hand body
+        mid_w = (tips[0] + tips[1]) / 2
+        hb = bid(hand)
+        Rh = data.xmat[hb].reshape(3, 3)
+        inv_h = np.zeros(4)
+        mujoco.mju_mat2Quat(inv_h, Rh.T.flatten())
+        hand_el = arm_el.find(f".//body[@name='{hand}']")
+        ET.SubElement(hand_el, "site", {
+            "name": f"{side}_grasp", "pos": fmt(Rh.T @ (mid_w - data.xpos[hb])),
+            "quat": fmt(inv_h), "size": "0.008",
+            "rgba": "0 1 0.3 0.6", "group": "4",
+        })
+        print(f"  {side} grasp site at {np.round(mid_w, 4)}  "
+              f"fingertip gap {np.linalg.norm(tips[0] - tips[1]) * 1000:.1f} mm")
 
     # wrist cameras, aimed from the camera mount toward that arm's end effector
     for side, cam_body, eef in (("right", "wrist_cam__wrist_cam", "right_eef"),
@@ -403,7 +494,9 @@ def build():
     arm_joints = [j.get("name") for j in arm_el.iter("joint")]
     for jn in arm_joints:
         ET.SubElement(act, "position", {
-            "class": "arm", "name": f"act_{jn}", "joint": jn,
+            "class": ("gripper" if "gripper" in jn
+                      else "mast" if jn in MAST_JOINTS else "arm"),
+            "name": f"act_{jn}", "joint": jn,
         })
 
     # ---- sensors ---------------------------------------------------------

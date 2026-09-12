@@ -1,0 +1,57 @@
+<mujoco model="bracketbot table pick">
+  <include file="chopped_dynamic.xml"/>
+
+  <statistic center="0.8 0 0.6" extent="2.4"/>
+
+  <visual>
+    <headlight diffuse="0.55 0.55 0.55" ambient="0.35 0.35 0.35" specular="0.1 0.1 0.1"/>
+    <rgba haze="0.15 0.25 0.35 1"/>
+    <global azimuth="150" elevation="-18" offwidth="1280" offheight="960"/>
+    <map znear="0.005" zfar="30"/>
+    <quality shadowsize="4096"/>
+  </visual>
+
+  <asset>
+    <texture type="skybox" builtin="gradient" rgb1="0.3 0.5 0.7" rgb2="0 0 0" width="512" height="3072"/>
+    <texture type="2d" name="groundplane" builtin="checker" mark="edge" rgb1="0.2 0.3 0.4" rgb2="0.1 0.2 0.3"
+             markrgb="0.8 0.8 0.8" width="300" height="300"/>
+    <material name="groundplane" texture="groundplane" texuniform="true" texrepeat="8 8" reflectance="0.1"/>
+    <material name="tablemat" rgba="0.62 0.46 0.32 1"/>
+    <material name="cubemat" rgba="0.88 0.28 0.22 1"/>
+    <material name="obstacle" rgba="0.35 0.55 0.75 1"/>
+  </asset>
+
+  <worldbody>
+    <light pos="1 0 4" dir="0 0 -1" directional="true" diffuse="0.5 0.5 0.5"/>
+    <light pos="3 3 3" dir="-1 -1 -1" diffuse="0.35 0.35 0.35"/>
+    <geom name="floor" size="0 0 0.05" type="plane" material="groundplane"
+          friction="1.6 0.01 0.001" condim="4"/>
+
+    <!-- an obstacle squarely on the straight line to the table, with open
+         floor on both sides: the robot has to commit to a way round -->
+    <body name="obstacle_a" pos="0.85 0.00 0.45">
+      <geom type="cylinder" size="0.18 0.45" material="obstacle"/>
+    </body>
+    <body name="obstacle_b" pos="0.95 -1.45 0.40">
+      <geom type="box" size="0.16 0.16 0.4" material="obstacle"/>
+    </body>
+
+    <!-- the larger cube: a 0.30 m block that acts as the table.
+         Sized to the arm's measured reach envelope (0.40 m forward, +/-0.12 m
+         lateral, from a grasp site that starts 0.71 m up): a deeper table
+         leaves the cube outside what the robot can reach without putting its
+         nose into the table first. -->
+    <body name="table" pos="2.30 0 0.15">
+      <geom name="table_top" type="box" size="0.15 0.15 0.15" material="tablemat"
+            friction="1.0 0.01 0.001" condim="4"/>
+    </body>
+
+    <!-- the small cube to pick up, near the edge the robot approaches from -->
+    <body name="cube" pos="2.22 0 0.3235">
+      <freejoint name="cube_free"/>
+      <geom name="cube_geom" type="box" size="0.0225 0.0225 0.0225" material="cubemat"
+            mass="0.05" friction="1.6 0.02 0.002" condim="4"
+            solref="0.005 1" priority="1"/>
+    </body>
+  </worldbody>
+</mujoco>
