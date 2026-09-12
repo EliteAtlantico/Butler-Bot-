@@ -38,6 +38,20 @@ class OccupancyGrid:
         self.logodds = np.zeros(self.size, np.float32)
         self.seen = np.zeros(self.size, bool)
 
+    @classmethod
+    def covering(cls, bounds, resolution: float = 0.10, **kw) -> "OccupancyGrid":
+        """Size the grid to a world extent instead of a hard-coded default.
+
+        The previous fixed +-6 m grid silently dropped every observation from
+        a scene laid out anywhere else: to_cell returned out-of-range indices,
+        inside() filtered them all away, and the map just stayed empty.
+        """
+        x0, y0, x1, y1 = bounds
+        nx = max(int(np.ceil((x1 - x0) / resolution)), 1)
+        ny = max(int(np.ceil((y1 - y0) / resolution)), 1)
+        return cls(resolution=resolution, origin=(float(x0), float(y0)),
+                   size=(nx, ny), **kw)
+
     # ------------------------------------------------------------- indexing
     def to_cell(self, xy) -> np.ndarray:
         xy = np.atleast_2d(np.asarray(xy, float))
