@@ -34,6 +34,7 @@ class VisualNavigator:
                  w_max: float = 1.0, waypoint_tol: float = 0.22,
                  heading_gain: float = 1.5, width: int = 320, height: int = 240,
                  max_range: float = 12.0, robot_radius: float = 0.30,
+                 re_engage_margin: float = 0.75,
                  grid: occupancy.OccupancyGrid | None = None,
                  detector=None, verbose: bool = False):
         # `detector(obs, robot_yaw=...) -> list[Detection]`. Defaults to the
@@ -48,6 +49,7 @@ class VisualNavigator:
         self.waypoint_tol, self.heading_gain = waypoint_tol, heading_gain
         self.width, self.height, self.max_range = width, height, max_range
         self.robot_radius = robot_radius
+        self.re_engage_margin = re_engage_margin
         self.grid = grid if grid is not None else occupancy.OccupancyGrid()
         self.verbose = verbose
 
@@ -137,6 +139,21 @@ class VisualNavigator:
         self._wp = 0
         return True
 
+    # ------------------------------------------------------------- recovery
+    def _displaced(self, bot):
+        """Has something moved the robot away from where it settled?
+
+        A viewer reset, a shove, a wheel slip and a localisation jump all look
+        identical from here: the goal is suddenly much further off than the
+        arrival threshold. Without this check ARRIVED is terminal and the
+        robot holds station for ever -- the kidnapped-robot failure. The
+        margin is hysteresis, so sitting near the threshold cannot oscillate.
+        """
+        if self.goal_xy is None:
+            return False
+        gap = float(np.linalg.norm(self.goal_xy - bot.position[:2]))
+        return gap > self.stop_distance + 0.15 + self.re_engage_margin
+
     # ------------------------------------------------------------ following
     def _follow(self, bot):
         here = bot.position[:2]
@@ -159,6 +176,14 @@ class VisualNavigator:
         if t >= self._next_sense:
             self._next_sense = t + self.sense_period
             self.sense(bot, t)
+
+        if self.done and self._displaced(bot):
+            self._note(f"t={t:.1f}s displaced to "
+                       f"({bot.position[0]:.2f}, {bot.position[1]:.2f}), re-engaging")
+            self.state = self.NAVIGATE
+            self._plan_failures = 0
+            self._next_plan = 0.0
+            self._wp = 0
 
         if self.state == self.SCAN:
             if self._scan_start is None:

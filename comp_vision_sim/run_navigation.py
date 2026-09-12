@@ -256,8 +256,11 @@ def main():
         import mujoco.viewer
         with mujoco.viewer.launch_passive(bot.model, bot.data) as viewer:
             start = time.time()
+            # Deliberately not stopping on nav.done: the navigator holds
+            # station once it arrives, and closing the window at the moment
+            # of success gives you nothing to look at.
             while viewer.is_running() and bot.time < args.duration \
-                    and not bot.fallen and not nav.done:
+                    and not bot.fallen:
                 bot.step(0.05, controller=nav)
                 tick()
                 viewer.sync()
