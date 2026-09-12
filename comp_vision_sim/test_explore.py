@@ -2,7 +2,7 @@
 
     ../.venv/bin/python -m unittest -v test_explore
 
-The robot surveys, the fast detector (the trained YOLO net) checks every photo,
+The robot surveys, the fast detector (pretrained open-vocabulary YOLO) checks every photo,
 and when it sees nothing the local LLM picks where to go next. The robot drives
 there, surveys again, and repeats until the detector finds the object; then it
 navigates to it and stops at the stand-off distance, ready for a pick.
@@ -41,7 +41,6 @@ from vision_sim.navigation import VisualNavigator  # noqa: E402
 
 SEARCH = os.path.join(HERE, "search_course.xml")
 COURSE = os.path.join(HERE, "obstacle_course.xml")
-WEIGHTS = os.path.join(HERE, "runs", "bracketbot_yolo", "weights", "best.pt")
 DOOR = np.array([3.0, 2.0])          # centre of the doorway in search_course.xml
 CEILING = 1.73
 
@@ -70,9 +69,16 @@ def box_around(u, v, w=320, h=240, half=15):
             (u + half) / w * 1000, (v + half) / h * 1000]
 
 
+_YOLO = None
+
+
 def yolo():
-    from vision_sim.yolo_detector import YoloDetector
-    return YoloDetector(WEIGHTS)
+    """The pretrained open-vocabulary YOLO looking for the red cylinder, loaded once."""
+    global _YOLO
+    if _YOLO is None:
+        from vision_sim.yolo_detector import YoloDetector
+        _YOLO = YoloDetector(target="red cylinder")
+    return _YOLO
 
 
 class OracleExplorer(LlmExplorer):
@@ -390,11 +396,12 @@ class TestExploreCommandLine(unittest.TestCase):
     def test_flags_reach_the_explorer(self):
         import run_navigation as rn
         a = rn.parse_args(["--explore", "--survey-shots", "6", "--survey-conf", "0.5",
-                           "--explore-step", "2.5", "--max-explore-steps", "4", "--llm-thinking"])
+                           "--explore-step", "2.5", "--max-explore-steps", "4", "--llm-thinking",
+                           "--target", "a blue mug"])
         with mock.patch("builtins.print"):
             ex = rn.build_explorer(a)
-        self.assertEqual((ex.n_shots, ex.min_confidence, ex.max_step, ex.client.thinking),
-                         (6, 0.5, 2.5, True))
+        self.assertEqual((ex.n_shots, ex.min_confidence, ex.max_step, ex.client.thinking, ex.target),
+                         (6, 0.5, 2.5, True, "a blue mug"))
         self.assertEqual(a.max_explore_steps, 4)
 
 

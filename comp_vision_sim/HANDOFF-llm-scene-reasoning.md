@@ -4,8 +4,10 @@ Branch: `feature/llm-scene-reasoning`. It is up to date with `main` and with
 `tianjun-computer-vision` (both merged in) and has NOT been merged into
 `main`; that is deliberately left for later.
 
-Goal: the BracketBot searches for an object of interest (the red column).
-The trained YOLO net looks for it in every camera frame; while it has not been
+Goal: the BracketBot searches for an object of interest (the red column by
+default; `--target "mug"` names any other). A PRETRAINED open-vocabulary YOLO
+(YOLO-World v2 large, no training on this simulator) looks for it by name in
+every camera frame; while it has not been
 seen, the LOCAL LLM looks at 8 labelled photos and picks where to go next; the
 robot drives there, looks again, and once YOLO finds the object it navigates to
 it and stops at the stand-off distance, ready for a pick (the manipulation
@@ -15,7 +17,8 @@ branch is not merged yet). If the goal is lost or moves, it searches again.
 
 | Run (live model) | Wall time | LLM queries | Result |
 |---|---|---|---|
-| **`--scene search_course.xml --explore`** (target hidden behind a wall) | **14.8–19.8 s** | 2 waypoints, 0 for the goal | YOLO found it at (6.49, −2.53) vs (6.5, −2.5); arrived 1.08–1.14 m away |
+| **`--scene search_course.xml --explore`** (target hidden behind a wall) | **20.0–23.9 s** | 2–3 waypoints, 0 for the goal | pretrained YOLO-World found it at (6.49, −2.52) vs (6.5, −2.5); arrived 1.08–1.11 m away |
+| `--scene apartment.xml --explore --target "floor lamp"` | **3.7 s** | 0 (YOLO saw it in the first survey) | found at (10.27, 3.26) vs (10.1, 3.2); arrived 1.12 m away |
 | `--detector llm --survey` | **8.7 s** (was 90.7 s) | 1 survey (6.1 s) | arrived 1.12 m from the column |
 | `--detector llm` | **13.9 s** (was 100.7 s) | 8 frames, mean 1.5 s | arrived 1.15 m |
 | survey, then the goal is moved mid-drive | **11.8 s** | 2 surveys, 0 frames | re-surveyed, arrived 1.10 m from the new spot |
@@ -25,9 +28,10 @@ branch is not merged yet). If the goal is lost or moves, it searches again.
 ```
 cd comp_vision_sim
 ../.venv/bin/python -u run_navigation.py --scene search_course.xml --explore -d 240   # YOLO search, LLM waypoints
+../.venv/bin/python -u run_navigation.py --scene apartment.xml --explore --target "floor lamp" -d 240   # any object by name
 ../.venv/bin/python -u run_navigation.py --detector llm --survey -d 120    # survey, then drive
 ../.venv/bin/python -u run_navigation.py --detector llm -d 90             # per-frame only
-../.venv/bin/python -m unittest -v test_llm_scene_reasoning test_llm_survey test_goal_recovery test_explore
+../.venv/bin/python -m unittest -v test_llm_scene_reasoning test_llm_survey test_goal_recovery test_explore test_pretrained_yolo
 ```
 
 venv = `/home/kc/Projects/Team-14-Battle-of-The-Schools/.venv` (Python 3.14,
@@ -39,6 +43,50 @@ The LLM server: `http://localhost:8080` (llama-server, `Qwen/Qwen3.8-27B`
 GGUF Q4_K_M + mmproj, multimodal, 131k ctx, 4 slots, `--image-min-tokens
 1024`) on the RTX 5090. It is already running — do NOT restart it; the user
 controls its lifecycle.
+
+## Pretrained YOLO (replaces the net trained on this simulator)
+
+`vision_sim/yolo_detector.py`: `YoloDetector(target="mug")`. The default is
+`yolov8l-worldv2.pt` (YOLO-World v2, large), an open-vocabulary model told what
+to find by name. The `--target` phrase is class 0 and its boxes come back
+labelled `target` (the navigator's goal label). A generic household vocabulary
+(`HOUSEHOLD_CLASSES`, ~35 names, override with `--classes a,b,c`) is detected
+alongside and keeps its own names. Boxes are ranged with depth exactly as before.
+`--detector yolo` and `--explore` both use it. `--weights runs/bracketbot_yolo/weights/best.pt`
+still loads the old 3-class net, and a COCO model (`yolo11s.pt`) works with a COCO class
+name as `--target`. `--explore` also puts the target's name into the LLM prompt.
+
+Weights: a bare model name is fetched into the repo's gitignored `weights/`
+on first use (CLIP ViT-B/32 goes to `weights/clip/`). Runs on CUDA when there
+is one, about 4–6 ms per frame. The LLM server holds ~27 GB of the 32 GB card:
+the CLIP text encoder is dropped once the class names are embedded, and if
+CUDA still runs out of memory the detector switches to the CPU instead of
+ending the run. Two runs plus a test suite at once did OOM before that fix.
+
+Chosen by benchmark on 320x240 survey photos taken where the explore loop takes
+them (target prompt plus the household vocabulary). *hit* = best confidence on
+the real object; *false* = best confidence on a box labelled as the target that
+is NOT the object:
+
+| Model @ imgsz | red column, obstacle course | red column, search course | lamp | bottle | mug | worst false target |
+|---|---|---|---|---|---|---|
+| yolov8s-worldv2 @320 | 0.24 (under conf) | 0.58 | 0.70 | 0.41 | — | 0.19 |
+| **yolov8l-worldv2 @320 (default)** | **0.60, 3/3 views** | **0.86, 3/3** | **0.81** | **0.71, 18/20** | **0.43** | **0.41** (red-cylinder max 0.12) |
+| yolov8l-worldv2 @640 | 0.51 | 0.60 | 0.89 | 0.76 | 0.56 | 0.43 (0.39 false red cylinder) |
+| yoloe-11s-seg @320 | 0.81 | 0.88 | — | 0.66 | — | 0.42 (0.40 false red cylinder) |
+| yoloe-11l-seg @640 | 0.90 | 0.92 | — | — | — | **0.90 false red cylinder** |
+
+YOLOE is more confident, but it also calls other things the goal with high
+confidence, which would send the robot to the wrong object. Its text model is
+also a 572 MB TorchScript file on the deprecated `torch.jit` path. Fixed-class
+COCO models (yolov8n, yolo26n, yolo11s) managed at most 5 of 17 sim objects,
+and 8 of the 17 have no COCO class at all (red column, pillar, barrier,
+cartons, bin, lamp, keys, box).
+
+Environment changes: `pip install ftfy regex tqdm` and
+`pip install --no-deps git+https://github.com/ultralytics/CLIP.git` in the
+venv (torch untouched). Tests set `YOLO_AUTOINSTALL=false` so nothing is
+pip-installed behind your back.
 
 ## YOLO search with LLM-chosen waypoints (`--explore`)
 
@@ -80,8 +128,8 @@ arrived 1.14 m away; 19.8 s wall, 2 LLM queries.
 
 `search_course.xml`: a full-height wall with one 1.2 m doorway splits the space;
 the target is behind it and invisible from the start in all 8 directions
-(checked geometrically and with YOLO). Materials match the obstacle course, so
-YOLO sees the same classes; walls are neutral grey.
+(checked geometrically and with the pretrained YOLO in `test_pretrained_yolo.py`).
+Walls are neutral grey.
 
 ## Speed: what made it ~10x faster
 
@@ -212,13 +260,16 @@ Flags: `--llm-url`, `--llm-model`, `--llm-period` (3.0 sim s), `--llm-conf`
 | `test_llm_scene_reasoning.py` | 53 | JSON parsing, coercion, cadence, request payload, `bbox_2d` maths, pixel → world at 4 poses, oracle-model run to ARRIVED, colour/YOLO still work, CLI, 1 live |
 | `test_llm_survey.py` | 35 | plan, per-photo direction labels vs camera geometry, interpretation incl. boxes, request/error paths, navigator survey in place → ARRIVED, fallbacks, CLI, 1 live |
 | `test_goal_recovery.py` | 27 | thinking switch, `forget()`, visibility rules, cooldown/cap/no-route/reset, moved goal followed, moved goal re-surveyed with 0 frame queries, vanished goal → STUCK without arriving, normal runs never re-search, CLI, 2 live speed guards |
+| `test_pretrained_yolo.py` | 18 | weights by path or pretrained name, target → goal label, no duplicate target, trained 3-class net still loads, COCO-style unknown target rejected, GPU when present, CLIP encoder dropped, CUDA OOM → CPU (other errors still raised); red column found and ranged <0.4 m from 2.5/4/6 m, blue pillars never the goal, hidden column → no goal in all 8 photos, lamp as target found in the apartment; CLI `--target`/`--classes`, explore prompt names the target |
 | `test_explore.py` | 24 | open-floor distance, doorway pixel → doorway waypoint, no waypoints into near walls, fallback avoids explored places, explore/goal/unusable/explored answers, prompt lists explored places, server down or bad answer still yields a waypoint; hidden goal found via LLM waypoints + YOLO and reached, YOLO seeing the goal in a survey skips the model, waypoint reached → survey again, unreachable waypoint → survey again, step cap → STUCK, lost goal → explore again, CLI; 2 live (waypoint pick, full search) |
 
 Offline everything passes; live tests skip themselves when the server is down
 (`SKIP_LIVE_LLM=1` forces it, `LLM_URL` retargets). Latest live results (all 6
 pass): frame 1.7 s / 0.15 m; survey 6.0 s / 0.2° / 0.17 m; speed guards frame
 1.7 s and survey 6.0 s with no reasoning; explore waypoint 2.1 s, 0.99 m from
-the doorway; full live search 14.8 s wall, 2 LLM waypoints, arrived 1.08 m. `test_llm_reasoner.py` (original offline
+the doorway; full live search 14.8 s wall, 2 LLM waypoints, arrived 1.08 m.
+With the pretrained YOLO (offline 139 + 18 pass): explore waypoint 6.8 s,
+0.48 m from the doorway; full live search 23.9 s wall, 3 waypoints, arrived 1.08 m. `test_llm_reasoner.py` (original offline
 script, legacy pixel answers) also passes.
 
 ## Open / next steps
@@ -230,16 +281,20 @@ script, legacy pixel answers) also passes.
 3. **The no-LLM fallback is not doorway-aware:** it picks the longest open run
    plus novelty, so without the model the search wanders the first room before
    finding the doorway. The LLM is what makes the search efficient.
-4. **The YOLO net knows three classes** (target, barrier, pillar) from the
-   obstacle-course renders; a different object of interest needs retraining.
+4. **Pretrained YOLO limits on these renders:** no model tested detected the
+   sim's potted plant (primitive shapes). The mug is found only from close
+   up. Small floor items (keys, 1 cm) are also cut by `min_height` 0.08 m in
+   the depth ranging. Real-looking meshes should do better; `--conf` (0.25)
+   and `--classes` are the knobs.
 5. **Re-search triggers only on things the robot can check:** it needs the
    goal's spot to be in view to notice it is gone. A goal that disappears
    while the robot faces away is noticed when the robot next looks there.
 6. **Depth tracking confirms "something is there", not "the goal is
    there".** If the goal is swapped for another object in the same spot,
    `--track depth` will not notice; use `--track detector` for that.
-7. **The prompts describe the obstacle course** (red column, orange barriers,
-   blue pillars). Other scenes need the goal description changed.
+7. **The survey and per-frame LLM prompts still describe the obstacle course**
+   (red column, orange barriers, blue pillars). The explore prompt names
+   `--target`.
 8. **The first (non-explore) search never gives up** (spins until it finds something), by
    design; only re-searches are capped.
 9. Pose is ground truth (`bot.position`, `bot.yaw`), as for every detector.
@@ -251,6 +306,7 @@ Keep each file's convention when editing.
 
 ## Key files
 
+- `comp_vision_sim/vision_sim/yolo_detector.py` — pretrained open-vocabulary YOLO + depth ranging
 - `comp_vision_sim/vision_sim/llm_explore.py` — LLM waypoints for the search
 - `comp_vision_sim/search_course.xml` — hidden-target scene
 - `comp_vision_sim/vision_sim/llm_survey.py` — the survey

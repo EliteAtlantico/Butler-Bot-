@@ -33,13 +33,13 @@ import numpy as np
 from .llm_reasoner import DEFAULT_BASE_URL, DEFAULT_MODEL, _extract_json, _goal_pixel, _to_bool, _to_float, _to_int
 from .llm_survey import LlmSurvey, SurveyResult, SurveyShot, _wrap, pixel_heading
 
-EXPLORE_PROMPT = """You are the navigator of a balancing two-wheeled robot searching an indoor space for a tall RED cylinder.
+EXPLORE_PROMPT = """You are the navigator of a balancing two-wheeled robot searching an indoor space for {target}.
 The robot stood still and turned in place, taking {n} photos. Each photo below is preceded by its own label: the robot's
 WORLD position (x, y in metres), the WORLD heading that photo faces, its angle from photo 0, and the world headings seen
 along its left and right edges. Headings are in degrees, 0 = +x axis, counter-clockwise positive. Every photo is
 {width} px wide and {height} px tall.
 {visited}
-First, look for the red cylinder in every photo. If it is visible, report it.
+First, look for {target} in every photo. If it is visible, report it.
 If it is not visible anywhere, choose WHERE TO GO NEXT to find it: the most promising patch of open floor to drive toward
 -- a doorway, a gap between obstacles, the entrance to an unexplored area, or far open space. Prefer places the robot has
 not explored. Do not choose walls, dead ends, or floor right next to the robot.
@@ -155,7 +155,8 @@ class LlmExplorer:
                  max_tokens: int = 1024, temperature: float = 0.1, timeout: float = 300.0,
                  verbose: bool = False, thinking: bool = False, max_step: float = 3.5,
                  min_step: float = 0.8, margin: float = 0.7, visit_radius: float = 1.0,
-                 floor_z: float = 0.0, ceiling: float = 1.75):
+                 floor_z: float = 0.0, ceiling: float = 1.75,
+                 target: str = "a tall RED cylinder"):
         # The survey supplies the plan, the per-photo labels, the client and the
         # goal ranging, so a goal the explorer reports is handled identically.
         self.survey = LlmSurvey(base_url, model, n_shots=n_shots, goal_label=goal_label,
@@ -164,6 +165,7 @@ class LlmExplorer:
                                 thinking=thinking)
         self.client = self.survey.client
         self.n_shots = n_shots
+        self.target = target            # what to look for, as the prompt names it
         self.min_confidence = min_confidence
         self.verbose = verbose
         self.max_step, self.min_step, self.margin = max_step, min_step, margin
@@ -183,7 +185,7 @@ class LlmExplorer:
         else:
             visited_txt = "\nNothing has been explored yet.\n"
         return EXPLORE_PROMPT.format(n=len(shots), width=intr.width, height=intr.height,
-                                     visited=visited_txt)
+                                     visited=visited_txt, target=self.target)
 
     def query(self, shots: list[SurveyShot], visited=()) -> ExploreResult:
         if not shots:

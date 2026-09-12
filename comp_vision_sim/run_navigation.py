@@ -4,7 +4,8 @@
     ./run_navigation.py                    # headless run, writes vision_nav.png
     ./run_navigation.py --viewer           # watch it in the MuJoCo viewer
     ./run_navigation.py --frames           # also dump per-frame perception PNGs
-    ./run_navigation.py --detector yolo    # use the net from train_yolo.py
+    ./run_navigation.py --detector yolo    # pretrained open-vocabulary YOLO (YOLO-World)
+    ./run_navigation.py --detector yolo --target "potted plant"   # look for anything by name
     ./run_navigation.py --detector llm     # the local LLM reasons about the scene
     ./run_navigation.py --detector llm --survey   # 8 labelled photos, one LLM query, then drive
     ./run_navigation.py --scene search_course.xml --explore   # YOLO searches; the LLM picks waypoints
@@ -25,6 +26,7 @@ import time
 from pathlib import Path
 
 HERE = Path(__file__).resolve().parent
+YOLO_DEFAULT_WEIGHTS = "yolov8l-worldv2.pt"   # == vision_sim.yolo_detector.DEFAULT_WEIGHTS
 # The robot model and its BracketBot wrapper live next door; this package
 # deliberately does not depend on them, so only the entry points bridge over.
 sys.path.insert(0, str(HERE))
@@ -64,8 +66,8 @@ def parse_args(argv=None):
                    help="turns to spin while mapping before planning")
     p.add_argument("--detector", default=None,
                    choices=["colour", "yolo", "geometric", "llm"],
-                   help="colour thresholding, a YOLO net trained by "
-                        "train_yolo.py, 'geometric' -- colour-free clustering "
+                   help="colour thresholding, a pretrained open-vocabulary "
+                        "YOLO that finds --target by name, 'geometric' -- colour-free clustering "
                         "that needs no palette and so works in an unfamiliar "
                         "scene -- or 'llm', the local LLM (llama-server) scene "
                         "reasoner")
@@ -78,8 +80,17 @@ def parse_args(argv=None):
                    help="shuttle every mocap body in the scene across the route "
                         "at this speed, to exercise moving obstacles")
     p.add_argument("--weights", default=None,
-                   help="YOLO weights (default: runs/bracketbot_yolo/weights/best.pt)")
-    p.add_argument("--conf", type=float, default=0.35, help="YOLO confidence")
+                   help="YOLO weights: a pretrained Ultralytics model name, fetched "
+                        "into weights/ on first use, or a path such as the net "
+                        "train_yolo.py writes (default: %s)" % YOLO_DEFAULT_WEIGHTS)
+    p.add_argument("--target", default=None, metavar="NAME",
+                   help="the object to find, named in plain words (\"mug\", "
+                        "\"potted plant\"); the YOLO detector and the explore LLM "
+                        "both look for it (default: the red cylinder)")
+    p.add_argument("--classes", default=None, metavar="A,B,...",
+                   help="comma-separated vocabulary the open-vocabulary YOLO "
+                        "detects besides --target (default: common household objects)")
+    p.add_argument("--conf", type=float, default=0.25, help="YOLO confidence")
     p.add_argument("--llm-url", default="http://localhost:8080/v1",
                    help="OpenAI-compatible base URL of the local LLM server")
     p.add_argument("--llm-model", default="Qwen/Qwen3.8-27B",
@@ -129,7 +140,7 @@ def parse_args(argv=None):
 
 
 def resolve_detector(args) -> str:
-    """--explore searches with the trained YOLO net unless told otherwise."""
+    """--explore searches with the pretrained YOLO unless told otherwise."""
     return args.detector or ("yolo" if getattr(args, "explore", False) else "colour")
 
 
@@ -146,14 +157,13 @@ def build_detector(args, info=None):
         return det
     if name == "yolo":
         from vision_sim.yolo_detector import YoloDetector
-        # A fresh training run wins over the checked-in net, so retraining takes
-        # effect without passing --weights; models/ is the fallback that makes a
-        # clean clone work at all.
-        trained = HERE / "runs" / "bracketbot_yolo" / "weights" / "best.pt"
-        shipped = HERE / "models" / "bracketbot_yolo.pt"
-        weights = args.weights or (trained if trained.exists() else shipped)
-        det = YoloDetector(weights, conf=args.conf)
-        print(f"detector: YOLO {weights} classes={list(det.names.values())}")
+        classes = ([c.strip() for c in args.classes.split(",") if c.strip()]
+                   if args.classes else None)
+        det = YoloDetector(args.weights or YOLO_DEFAULT_WEIGHTS, target=args.target,
+                           classes=classes, conf=args.conf)
+        names = list(det.names.values())
+        print(f"detector: YOLO {det.weights} on {det.device}, target={det.target!r}, "
+              f"{len(names)} classes{' (open vocabulary)' if det.open_vocab else ''}")
         return det
     from vision_sim.llm_reasoner import LlmGoalDetector
     det = LlmGoalDetector(base_url=args.llm_url, model=args.llm_model,
@@ -181,7 +191,8 @@ def build_explorer(args):
     explorer = LlmExplorer(base_url=args.llm_url, model=args.llm_model,
                            n_shots=args.survey_shots, min_confidence=args.survey_conf,
                            max_tokens=args.survey_max_tokens, thinking=args.llm_thinking,
-                           max_step=args.explore_step, verbose=True)
+                           max_step=args.explore_step, verbose=True,
+                           target=args.target or "a tall RED cylinder")
     print(f"explore: {args.survey_shots}-photo surveys; the LLM picks waypoints, "
           f"at most {args.max_explore_steps}")
     return explorer
