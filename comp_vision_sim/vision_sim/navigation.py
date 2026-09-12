@@ -26,7 +26,8 @@ def _wrap(a):
 class VisualNavigator:
     """Search -> detect -> map -> plan -> follow, driven by the RGB-D camera."""
 
-    SCAN, NAVIGATE, ARRIVED, STUCK = "scan", "navigate", "arrived", "stuck"
+    SURVEY, SCAN, NAVIGATE, ARRIVED, STUCK = ("survey", "scan", "navigate",
+                                             "arrived", "stuck")
 
     @classmethod
     def for_bot(cls, bot, goal=None, camera: str | None = None, **kw):
@@ -51,6 +52,9 @@ class VisualNavigator:
                  re_engage_margin: float = 0.75,
                  grid: occupancy.OccupancyGrid | None = None,
                  resolution: float = 0.10,
+                 survey=None, survey_turn_tol: float = 0.08,
+                 survey_settle: float = 0.3, survey_turn_timeout: float = 6.0,
+                 provisional_distance: float = 3.0,
                  detector=None, verbose: bool = False):
         # `detector(obs, robot_yaw=...) -> list[Detection]`. Defaults to the
         # colour detector; a YoloDetector satisfies the same contract, so
@@ -89,7 +93,23 @@ class VisualNavigator:
         elif isinstance(goal, str):
             self.goal_label = goal
 
-        self.state = self.SCAN
+        # An LLM survey (vision_sim.llm_survey.LlmSurvey) replaces the spin
+        # scan: photograph every direction first, then ask the model once. A
+        # coordinate goal needs no finding, so it skips the survey entirely.
+        self.survey = survey
+        self.survey_turn_tol, self.survey_settle = survey_turn_tol, survey_settle
+        self.survey_turn_timeout = survey_turn_timeout
+        self.provisional_distance = provisional_distance
+        self.survey_shots: list = []
+        self.survey_result = None
+        self._survey_plan: list[float] | None = None
+        self._survey_idx = 0
+        self._settle_since: float | None = None
+        self._turn_since: float | None = None
+        self._goal_provisional = False
+
+        self.state = (self.SURVEY if (survey is not None and self.fixed_goal is None)
+                      else self.SCAN)
         self.detections: list[perception.Detection] = []
         self.goal_xy: np.ndarray | None = None
         self.path: list[np.ndarray] = []
@@ -121,16 +141,16 @@ class VisualNavigator:
         self.obs = perception.observe(bot, camera=self.camera, width=self.width,
                                       height=self.height, max_range=self.max_range)
         # Pass sim time through so time-gated detectors (e.g. the local LLM)
-        # pace themselves on the sim clock, not the wall clock.
-        self.detections = self.detector(self.obs, robot_yaw=bot.yaw, t=t)
+        # pace themselves on the sim clock, not the wall clock. During a survey
+        # the model looks at every photo at once at the end, so querying the
+        # per-frame detector while turning would only duplicate that, ~10 s a go.
+        self.detections = ([] if self.state == self.SURVEY
+                           else self.detector(self.obs, robot_yaw=bot.yaw, t=t))
         if len(self.detections) >= len(self.best_detections):
             self.best_obs, self.best_detections, self.best_time = (
                 self.obs, list(self.detections), t)
 
-        hits = perception.obstacle_points(self.obs, self_radius=self.self_radius,
-                                          floor_z=self.floor_z)
-        free = perception.floor_points(self.obs, floor_z=self.floor_z)
-        self.grid.integrate(self.obs.cam_pos[:2], hits, free)
+        self._integrate(self.obs)
 
         if self.fixed_goal is not None:
             self.goal_xy = self.fixed_goal
@@ -145,8 +165,25 @@ class VisualNavigator:
             ray = seen.position[:2] - self.obs.cam_pos[:2]
             ray /= max(np.linalg.norm(ray), 1e-6)
             estimate = seen.position[:2] + ray * 0.2
-            self.goal_xy = (estimate if self.goal_xy is None
-                            else 0.7 * self.goal_xy + 0.3 * estimate)
+            if self.goal_xy is None or self._goal_provisional:
+                # A heading-only survey answer is a guess at the distance; the
+                # first real sighting replaces it outright rather than being
+                # averaged with it.
+                if self._goal_provisional:
+                    self._note(f"t={t:.1f}s goal sighted at ({estimate[0]:.2f}, "
+                               f"{estimate[1]:.2f}), replacing the survey's "
+                               "provisional goal")
+                self.goal_xy = estimate
+                self._goal_provisional = False
+            else:
+                self.goal_xy = 0.7 * self.goal_xy + 0.3 * estimate
+
+    def _integrate(self, obs):
+        """Fold one RGB-D frame into the occupancy grid."""
+        hits = perception.obstacle_points(obs, self_radius=self.self_radius,
+                                          floor_z=self.floor_z)
+        free = perception.floor_points(obs, floor_z=self.floor_z)
+        self.grid.integrate(obs.cam_pos[:2], hits, free)
 
     # ------------------------------------------------------------ planning
     def replan(self, bot):
@@ -215,6 +252,97 @@ class VisualNavigator:
         v = self.v_max * max(0.0, np.cos(err)) * min(1.0, dist / 0.5)
         return v, w
 
+    # -------------------------------------------------------------- survey
+    def _survey_tick(self, bot, t):
+        """Turn to each planned heading, hold still, photograph; then ask once."""
+        from .llm_survey import SurveyShot
+
+        if self._survey_plan is None:
+            self._survey_plan = self.survey.headings(bot.yaw)
+            self._turn_since = t
+            self._note(f"t={t:.1f}s survey: {len(self._survey_plan)} photos from "
+                       f"({bot.position[0]:.2f}, {bot.position[1]:.2f})")
+
+        if self._survey_idx < len(self._survey_plan):
+            target = self._survey_plan[self._survey_idx]
+            err = _wrap(target - bot.yaw)
+            spinning = abs(float(bot.state[5])) > 0.15
+            timed_out = t - self._turn_since > self.survey_turn_timeout
+            if (abs(err) > self.survey_turn_tol or spinning) and not timed_out:
+                self._settle_since = None
+                bot.drive(0.0, float(np.clip(self.heading_gain * err,
+                                             -self.w_max, self.w_max)))
+                return
+            # On target: hold still long enough for the balancing base to stop
+            # rocking, or the photo's recorded heading is not the one it shows.
+            bot.drive(0.0, 0.0)
+            if self._settle_since is None:
+                self._settle_since = t
+            if t - self._settle_since < self.survey_settle and not timed_out:
+                return
+            if timed_out:
+                self._note(f"t={t:.1f}s survey: photo {self._survey_idx} taken "
+                           f"{abs(np.degrees(err)):.0f} deg off target after "
+                           f"{self.survey_turn_timeout:.0f}s")
+            obs = perception.observe(bot, camera=self.camera, width=self.width,
+                                     height=self.height, max_range=self.max_range)
+            self._integrate(obs)
+            self.obs = obs
+            # Record the heading the robot ACTUALLY faced, not the planned one.
+            self.survey_shots.append(SurveyShot(self._survey_idx, float(bot.yaw),
+                                                bot.position[:2].copy(), obs))
+            self._survey_idx += 1
+            self._settle_since = None
+            self._turn_since = t
+            return
+
+        bot.drive(0.0, 0.0)
+        self._note(f"t={t:.1f}s survey: asking the model about "
+                   f"{len(self.survey_shots)} photos")
+        self.survey_result = self.survey.query(self.survey_shots)
+        self._finish_survey(bot, t, self.survey_result)
+
+    def _finish_survey(self, bot, t, res):
+        here = bot.position[:2]
+        if res.found and res.detection is not None:
+            cam = self.survey_shots[res.photo].obs.cam_pos[:2]
+            pos = res.detection.position[:2]
+            ray = pos - cam
+            ray = ray / max(float(np.linalg.norm(ray)), 1e-6)
+            # Same nudge as sense(): the detector sees the near face.
+            self.goal_xy = pos + ray * 0.2
+            self._goal_provisional = False
+            self._note(f"t={t:.1f}s survey: goal at ({self.goal_xy[0]:.2f}, "
+                       f"{self.goal_xy[1]:.2f}) from photo {res.photo}, heading "
+                       f"{np.degrees(res.heading):.0f} deg")
+        elif res.found and res.heading is not None:
+            reach = min(self.provisional_distance, self.max_range)
+            guess = here + reach * np.array([np.cos(res.heading), np.sin(res.heading)])
+            self.goal_xy = self._clip_to_grid(guess)
+            self._goal_provisional = True
+            self._note(f"t={t:.1f}s survey: goal heading {np.degrees(res.heading):.0f} deg "
+                       f"(via {res.heading_source}) but no range; heading for "
+                       f"({self.goal_xy[0]:.2f}, {self.goal_xy[1]:.2f}) until it is sighted")
+        else:
+            why = res.error or "goal not found"
+            self._note(f"t={t:.1f}s survey: {why}; falling back to a spin scan")
+            self.state = self.SCAN
+            return
+        self.replan(bot)
+        self._next_plan = t + self.plan_period
+        self.state = self.NAVIGATE
+
+    def _clip_to_grid(self, xy):
+        """Keep a guessed goal inside the map, or planning cannot address it."""
+        g = self.grid
+        try:
+            (x0, y0), (nx, ny), r = g.origin, g.size, g.resolution
+        except (AttributeError, TypeError, ValueError):
+            return np.asarray(xy, float)
+        m = 2 * r
+        return np.array([np.clip(xy[0], x0 + m, x0 + nx * r - m),
+                         np.clip(xy[1], y0 + m, y0 + ny * r - m)])
+
     # ----------------------------------------------------------------- tick
     def __call__(self, bot, t):
         # A sim reset (the viewer's R key, or BracketBot.reset) zeros the
@@ -230,6 +358,8 @@ class VisualNavigator:
         if self._last_t is not None and t < self._last_t:
             self._next_sense = t
             self._next_plan = t
+            self._settle_since = None
+            self._turn_since = t
         self._last_t = t
 
         if t >= self._next_sense:
@@ -243,6 +373,10 @@ class VisualNavigator:
             self._plan_failures = 0
             self._next_plan = 0.0
             self._wp = 0
+
+        if self.state == self.SURVEY:
+            self._survey_tick(bot, t)
+            return
 
         if self.state == self.SCAN:
             if self._scan_start is None:
@@ -264,6 +398,18 @@ class VisualNavigator:
         if self.state == self.NAVIGATE:
             if self.goal_xy is not None and \
                     np.linalg.norm(self.goal_xy - bot.position[:2]) < self.stop_distance + 0.15:
+                if self._goal_provisional:
+                    # Reached the survey's guess without ever seeing the goal:
+                    # that is not arriving. Look around from here instead.
+                    self._note(f"t={t:.1f}s reached the provisional goal without "
+                               "sighting the target; scanning")
+                    self._goal_provisional = False
+                    self.goal_xy = None
+                    self.path = []
+                    self._scan_start, self._scan_yaw = None, 0.0
+                    self.state = self.SCAN
+                    bot.drive(0.0, 0.0)
+                    return
                 self.state = self.ARRIVED
                 self._note(f"t={t:.1f}s arrived, "
                            f"{np.linalg.norm(self.goal_xy - bot.position[:2]):.2f}m from goal")

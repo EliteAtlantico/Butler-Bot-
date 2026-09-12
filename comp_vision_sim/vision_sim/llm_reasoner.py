@@ -118,6 +118,14 @@ def _to_float(x):
         return None
 
 
+def _png_data_url(rgb: np.ndarray) -> str:
+    """An RGB array as a base64 PNG data URL, the form the server accepts."""
+    from PIL import Image
+    buf = io.BytesIO()
+    Image.fromarray(np.asarray(rgb, np.uint8)).save(buf, "PNG")
+    return "data:image/png;base64," + base64.b64encode(buf.getvalue()).decode()
+
+
 _TRUE = {"true", "yes", "y", "1"}
 _FALSE = {"false", "no", "n", "0", "null", "none", ""}
 
@@ -155,25 +163,42 @@ class LLMClient:
         self.timeout = timeout
         self.verbose = verbose
         self.last_finish_reason: str | None = None
+        self.last_usage: dict = {}
+        self.last_reasoning_chars = 0
 
     def ask_image(self, rgb: np.ndarray, prompt: str) -> tuple[str, float]:
         """Send one image + prompt; return (content_text, latency_seconds)."""
-        from PIL import Image
-        buf = io.BytesIO()
-        Image.fromarray(np.asarray(rgb, np.uint8)).save(buf, "PNG")
-        b64 = base64.b64encode(buf.getvalue()).decode()
+        return self._chat([
+            {"type": "text", "text": prompt + "\n\n/no_think"},
+            {"type": "image_url", "image_url": {"url": _png_data_url(rgb)}},
+        ])
 
+    def ask_images(self, images, labels, prompt: str) -> tuple[str, float]:
+        """Several images in ONE request, each preceded by its own text label.
+
+        The label is what ties a photo to where it was taken ("Photo 3: robot
+        at (1.0, 2.0), camera heading 135 deg"), so the model can reason across
+        views instead of looking at each in isolation.
+        """
+        if len(images) != len(labels):
+            raise ValueError(f"{len(images)} images but {len(labels)} labels")
+        content = [{"type": "text", "text": prompt + "\n\n/no_think"}]
+        for rgb, label in zip(images, labels):
+            content.append({"type": "text", "text": str(label)})
+            content.append({"type": "image_url",
+                            "image_url": {"url": _png_data_url(rgb)}})
+        return self._chat(content)
+
+    def _chat(self, content: list) -> tuple[str, float]:
         payload = {
             "model": self.model,
-            "messages": [{"role": "user", "content": [
-                {"type": "text", "text": prompt + "\n\n/no_think"},
-                {"type": "image_url",
-                 "image_url": {"url": f"data:image/png;base64,{b64}"}},
-            ]}],
+            "messages": [{"role": "user", "content": content}],
             "max_tokens": self.max_tokens,
             "temperature": self.temperature,
             # The Qwen build otherwise spends the whole budget on internal
             # reasoning and returns empty content; force straight-to-answer.
+            # It still reasons on hard multi-image prompts despite this --
+            # see `last_reasoning_chars` -- so give those a large max_tokens.
             "enable_thinking": False,
         }
         t0 = time.time()
@@ -187,10 +212,14 @@ class LLMClient:
         # "length" means the token cap cut the answer off -- the JSON is
         # incomplete and will fail to parse. Recorded so the caller can count it.
         self.last_finish_reason = choice.get("finish_reason")
-        content = choice["message"]["content"]
+        self.last_usage = data.get("usage", {}) or {}
+        message = choice.get("message", {}) or {}
+        self.last_reasoning_chars = len(message.get("reasoning_content") or "")
+        content = message.get("content") or ""
         if self.verbose:
-            print(f"    [llm] {dt:.1f}s  usage={data.get('usage', {}).get('completion_tokens', '?')} tok"
-                  f"  finish={self.last_finish_reason}")
+            print(f"    [llm] {dt:.1f}s  usage={self.last_usage.get('completion_tokens', '?')} tok"
+                  f"  finish={self.last_finish_reason}"
+                  f"{f'  reasoning={self.last_reasoning_chars} chars' if self.last_reasoning_chars else ''}")
         return content, dt
 
 

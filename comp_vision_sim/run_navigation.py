@@ -6,6 +6,7 @@
     ./run_navigation.py --frames           # also dump per-frame perception PNGs
     ./run_navigation.py --detector yolo    # use the net from train_yolo.py
     ./run_navigation.py --detector llm     # the local LLM reasons about the scene
+    ./run_navigation.py --detector llm --survey   # 8 labelled photos, one LLM query, then drive
 
 The robot spins once to map the room with its depth camera, finds the red
 column, then A*s a path around the barrier it can see and drives it --
@@ -86,6 +87,17 @@ def parse_args(argv=None):
     p.add_argument("--llm-max-tokens", type=int, default=2048,
                    help="completion token cap per LLM query (1024 truncated "
                         "answers on the 27B model)")
+    p.add_argument("--survey", action="store_true",
+                   help="instead of spinning, photograph N directions and ask the "
+                        "local LLM once -- every photo labelled with the robot's "
+                        "position and heading -- which way the goal is")
+    p.add_argument("--survey-shots", type=int, default=8,
+                   help="photos in the survey, evenly spaced around the robot")
+    p.add_argument("--survey-max-tokens", type=int, default=6144,
+                   help="completion token cap for the survey query; it reasons "
+                        "across all photos and 1024 ran out before any answer")
+    p.add_argument("--survey-conf", type=float, default=0.40,
+                   help="min confidence to accept the survey's answer")
     return p.parse_args(argv)
 
 
@@ -118,6 +130,17 @@ def build_detector(args, info=None):
     print(f"detector: local LLM {args.llm_url} model={args.llm_model} "
           f"query every {args.llm_period:g} sim s")
     return det
+
+
+def build_survey(args):
+    if not args.survey:
+        return None
+    from vision_sim.llm_survey import LlmSurvey
+    survey = LlmSurvey(base_url=args.llm_url, model=args.llm_model,
+                       n_shots=args.survey_shots, min_confidence=args.survey_conf,
+                       max_tokens=args.survey_max_tokens, verbose=True)
+    print(f"survey: {args.survey_shots} photos, one query to {args.llm_url}")
+    return survey
 
 
 def annotate(rgb, detections, scale=3):
@@ -298,7 +321,8 @@ def main():
         goal = [float(v) for v in args.goal.replace(" ", "").split(",")[:2]]
     nav = VisualNavigator.for_bot(bot, goal=goal, camera=args.camera,
                                   scan_turns=args.seed_scan, verbose=True,
-                                  detector=build_detector(args, info))
+                                  detector=build_detector(args, info),
+                                  survey=build_survey(args))
     print("cameras:", ", ".join(bot.camera_names))
     print(info.describe())
     print(f"scene: {args.scene}")
@@ -356,6 +380,15 @@ def main():
         det = nav.detector
         print(f"llm: {det.queries} queries, {det.errors} errors, "
               f"{det.truncated} truncated answers")
+    if nav.survey is not None:
+        r = nav.survey_result
+        print(f"survey: {len(nav.survey_shots)} photos, {nav.survey!r}")
+        if r is not None and r.found:
+            print(f"  answer: photo {r.photo} px {r.pixel} heading "
+                  f"{np.degrees(r.heading):.0f} deg via {r.heading_source}, "
+                  f"{r.latency:.1f}s, {r.completion_tokens} tokens")
+        elif r is not None:
+            print(f"  answer: not found ({r.error or r.reason})")
 
     if nav.obs is not None:
         figure(bot, nav, track, args.out, elapsed, truth=truth)
