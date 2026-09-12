@@ -1,0 +1,44 @@
+<mujoco model="bracketbot scene">
+  <include file="chopped_dynamic.xml"/>
+
+  <statistic center="0 0 0.6" extent="2.0"/>
+
+  <visual>
+    <headlight diffuse="0.55 0.55 0.55" ambient="0.35 0.35 0.35" specular="0.1 0.1 0.1"/>
+    <rgba haze="0.15 0.25 0.35 1"/>
+    <global azimuth="140" elevation="-20" offwidth="1280" offheight="960"/>
+    <map znear="0.01" zfar="30"/>
+    <quality shadowsize="4096"/>
+  </visual>
+
+  <asset>
+    <texture type="skybox" builtin="gradient" rgb1="0.3 0.5 0.7" rgb2="0 0 0" width="512" height="3072"/>
+    <texture type="2d" name="groundplane" builtin="checker" mark="edge" rgb1="0.2 0.3 0.4" rgb2="0.1 0.2 0.3"
+             markrgb="0.8 0.8 0.8" width="300" height="300"/>
+    <material name="groundplane" texture="groundplane" texuniform="true" texrepeat="8 8" reflectance="0.1"/>
+    <material name="target" rgba="0.85 0.25 0.2 1"/>
+    <material name="pillar" rgba="0.35 0.55 0.75 1"/>
+  </asset>
+
+  <worldbody>
+    <light pos="0 0 4" dir="0 0 -1" directional="true" diffuse="0.5 0.5 0.5"/>
+    <light pos="3 3 3" dir="-1 -1 -1" directional="false" diffuse="0.4 0.4 0.4"/>
+    <geom name="floor" size="0 0 0.05" type="plane" material="groundplane"
+          friction="1.6 0.01 0.001" condim="4"/>
+
+    <!-- landmarks, so the depth camera and any navigation algorithm have
+         something to actually see -->
+    <body name="pillar_a" pos="4.5 0.0 0.5">
+      <geom type="cylinder" size="0.15 0.5" material="pillar"/>
+    </body>
+    <body name="pillar_b" pos="3.2 2.6 0.4">
+      <geom type="box" size="0.2 0.2 0.4" material="pillar"/>
+    </body>
+    <body name="pillar_c" pos="-2.6 -3.0 0.3">
+      <geom type="cylinder" size="0.25 0.3" material="pillar"/>
+    </body>
+    <body name="target_box" pos="5.5 -2.0 0.15">
+      <geom type="box" size="0.15 0.15 0.15" material="target"/>
+    </body>
+  </worldbody>
+</mujoco>

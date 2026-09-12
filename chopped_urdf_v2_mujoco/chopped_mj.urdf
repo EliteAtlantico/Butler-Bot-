@@ -1,0 +1,1166 @@
+<robot name="chopped_urdf_v2">
+  <mujoco>
+    <compiler meshdir="meshes/" discardvisual="false" balanceinertia="true" strippath="false" fusestatic="false"/>
+  </mujoco>
+    <!-- chopped_urdf_v2: Onshape chopped_urdf_v2 base + chopped_urdf_v1 arms. The base is re-aligned to the v1 root convention (wheel-axle midpoint over the origin, tyres on z=0); the arm subtree is v1's, raised by the 38.59 mm the mast gained. -->
+    <link name="base_extrusion__base_extrusion">
+        <inertial>
+            <mass value="0.000107345" />
+            <origin xyz="-0.0113 -0.08 -2.23966e-16" rpy="0 -0 0" />
+            <inertia ixx="2.46038e-07" ixy="0" ixz="0" iyy="3.4073e-08" iyz="0" izz="2.46038e-07" />
+        </inertial>
+        <visual>
+            <origin xyz="0 0 0" rpy="0 -0 0" />
+            <geometry>
+                <mesh filename="Base_Extrusion__Base_Extrusion.stl" scale="1 1 1" />
+            </geometry>
+            <material name="0.792157_0.819608_0.933333_0.000000_0.000000">
+                <color rgba="0.792157 0.819608 0.933333 1" />
+            </material>
+        </visual>
+    </link>
+    <link name="base_extrusion__base_extrusion__base_extrusion__base_extrusion">
+        <inertial>
+            <mass value="0.000110836" />
+            <origin xyz="-0.0110625 0.02 -1.1605e-15" rpy="0 -0 0" />
+            <inertia ixx="5.95236e-07" ixy="0" ixz="0" iyy="5.95236e-07" iyz="0" izz="3.59269e-08" />
+        </inertial>
+        <visual>
+            <origin xyz="0 0 0" rpy="0 -0 0" />
+            <geometry>
+                <mesh filename="Base_Extrusion__Base_Extrusion__Base_Extrusion__Base_Extrusion.stl" scale="1 1 1" />
+            </geometry>
+            <material name="0.800000_0.800000_0.800000_0.000000_0.000000">
+                <color rgba="0.8 0.8 0.8 1" />
+            </material>
+        </visual>
+    </link>
+    <link name="base_plate__base_plate">
+        <inertial>
+            <mass value="9.87266e-05" />
+            <origin xyz="-0.0113 0.0475233 -1.17937e-15" rpy="0 -0 0" />
+            <inertia ixx="2.38457e-07" ixy="0" ixz="0" iyy="4.12406e-07" iyz="0" izz="1.7421e-07" />
+        </inertial>
+        <visual>
+            <origin xyz="0 0 0" rpy="0 -0 0" />
+            <geometry>
+                <mesh filename="Base_Plate__Base_Plate.stl" scale="1 1 1" />
+            </geometry>
+            <material name="1.000000_1.000000_1.000000_0.000000_0.000000">
+                <color rgba="1 1 1 1" />
+            </material>
+        </visual>
+    </link>
+    <link name="base_print__base_print">
+        <inertial>
+            <mass value="9.90885e-05" />
+            <origin xyz="-0.032381 -0.125405 -2.07074e-07" rpy="0 -0 0" />
+            <inertia ixx="5.73935e-07" ixy="1.83213e-07" ixz="-6.07271e-13" iyy="2.12857e-07" iyz="1.92323e-12" izz="5.7925e-07" />
+        </inertial>
+        <visual>
+            <origin xyz="0 0 0" rpy="0 -0 0" />
+            <geometry>
+                <mesh filename="Base_Print__Base_Print.stl" scale="1 1 1" />
+            </geometry>
+            <material name="1.000000_1.000000_1.000000_0.000000_0.000000">
+                <color rgba="1 1 1 1" />
+            </material>
+        </visual>
+    </link>
+    <link name="battery_terminal__battery_terminal">
+        <inertial>
+            <mass value="0.000103703" />
+            <origin xyz="-0.0429972 -0.0685507 -6.34217e-12" rpy="0 -0 0" />
+            <inertia ixx="8.96271e-08" ixy="2.06444e-09" ixz="0" iyy="3.66645e-08" iyz="0" izz="6.2996e-08" />
+        </inertial>
+        <visual>
+            <origin xyz="0 0 0" rpy="0 -0 0" />
+            <geometry>
+                <mesh filename="Battery_Terminal__Battery_Terminal.stl" scale="1 1 1" />
+            </geometry>
+            <material name="1.000000_0.756863_0.054902_0.000000_0.000000">
+                <color rgba="1 0.756863 0.054902 1" />
+            </material>
+        </visual>
+    </link>
+    <link name="bottom_cover_back__bottom_cover_back__bottom_cover_back__bottom_cover_back">
+        <inertial>
+            <mass value="0.000584451" />
+            <origin xyz="-0.0408036 -0.380505 0.000138477" rpy="0 -0 0" />
+            <inertia ixx="4.92369e-06" ixy="1.50686e-08" ixz="4.1007e-13" iyy="2.53892e-07" iyz="1.11593e-11" izz="4.74887e-06" />
+        </inertial>
+        <visual>
+            <origin xyz="0 0 0" rpy="0 -0 0" />
+            <geometry>
+                <mesh filename="Bottom_Cover_Back__Bottom_Cover_Back__Bottom_Cover_Back__Bottom_Cover_Back.stl" scale="1 1 1" />
+            </geometry>
+            <material name="1.000000_1.000000_1.000000_0.000000_0.000000">
+                <color rgba="1 1 1 1" />
+            </material>
+        </visual>
+    </link>
+    <link name="bottom_cover_front__bottom_cover_front__bottom_cover_front__bottom_cover_front">
+        <inertial>
+            <mass value="0.000584451" />
+            <origin xyz="0.0182036 -0.380505 -0.000135195" rpy="0 -0 0" />
+            <inertia ixx="4.92369e-06" ixy="-1.50686e-08" ixz="4.10056e-13" iyy="2.53892e-07" iyz="-1.11586e-11" izz="4.74887e-06" />
+        </inertial>
+        <visual>
+            <origin xyz="0 0 0" rpy="0 -0 0" />
+            <geometry>
+                <mesh filename="Bottom_Cover_Front__Bottom_Cover_Front__Bottom_Cover_Front__Bottom_Cover_Front.stl" scale="1 1 1" />
+            </geometry>
+            <material name="1.000000_1.000000_1.000000_0.000000_0.000000">
+                <color rgba="1 1 1 1" />
+            </material>
+        </visual>
+    </link>
+    <link name="camera_cover__camera_cover__camera_cover__camera_cover">
+        <inertial>
+            <mass value="9.18732e-06" />
+            <origin xyz="0.0433442 -1.49744 3.49846e-07" rpy="0 -0 0" />
+            <inertia ixx="9.91747e-09" ixy="8.81302e-10" ixz="-1.82476e-14" iyy="9.1327e-09" iyz="2.82971e-14" izz="1.94651e-09" />
+        </inertial>
+        <visual>
+            <origin xyz="0 0 0" rpy="0 -0 0" />
+            <geometry>
+                <mesh filename="Camera_Cover__Camera_Cover__Camera_Cover__Camera_Cover.stl" scale="1 1 1" />
+            </geometry>
+            <material name="0.250980_0.250980_0.250980_0.000000_0.000000">
+                <color rgba="0.25098 0.25098 0.25098 1" />
+            </material>
+        </visual>
+    </link>
+    <link name="cover_middlebot_back__cover_middlebot_back__cover_middlebot_back__cover_middlebot_back">
+        <inertial>
+            <mass value="0.000601809" />
+            <origin xyz="-0.0407183 -0.69578 7.82824e-05" rpy="0 -0 0" />
+            <inertia ixx="5.33508e-06" ixy="-5.34626e-11" ixz="0" iyy="2.59965e-07" iyz="0" izz="5.1563e-06" />
+        </inertial>
+        <visual>
+            <origin xyz="0 0 0" rpy="0 -0 0" />
+            <geometry>
+                <mesh filename="Cover_MiddleBot_Back__Cover_MiddleBot_Back__Cover_MiddleBot_Back__Cover_MiddleBot_Back.stl" scale="1 1 1" />
+            </geometry>
+            <material name="0.894118_0.894118_0.894118_0.000000_0.000000">
+                <color rgba="0.894118 0.894118 0.894118 1" />
+            </material>
+        </visual>
+    </link>
+    <link name="cover_middlebot_front__cover_middlebot_front__cover_middlebot_front__cover_middlebot_front">
+        <inertial>
+            <mass value="0.000601809" />
+            <origin xyz="0.0181183 -0.69578 -7.50002e-05" rpy="0 -0 0" />
+            <inertia ixx="5.33508e-06" ixy="5.34627e-11" ixz="0" iyy="2.59965e-07" iyz="0" izz="5.1563e-06" />
+        </inertial>
+        <visual>
+            <origin xyz="0 0 0" rpy="0 -0 0" />
+            <geometry>
+                <mesh filename="Cover_MiddleBot_Front__Cover_MiddleBot_Front__Cover_MiddleBot_Front__Cover_MiddleBot_Front.stl" scale="1 1 1" />
+            </geometry>
+            <material name="0.894118_0.894118_0.894118_0.000000_0.000000">
+                <color rgba="0.894118 0.894118 0.894118 1" />
+            </material>
+        </visual>
+    </link>
+    <link name="cover_middletop_back__cover_middletop_back__cover_middletop_back__cover_middletop_back">
+        <inertial>
+            <mass value="0.000601809" />
+            <origin xyz="-0.0407183 -1.01578 7.82824e-05" rpy="0 -0 0" />
+            <inertia ixx="5.33508e-06" ixy="-5.34626e-11" ixz="0" iyy="2.59965e-07" iyz="0" izz="5.1563e-06" />
+        </inertial>
+        <visual>
+            <origin xyz="0 0 0" rpy="0 -0 0" />
+            <geometry>
+                <mesh filename="Cover_MiddleTop_Back__Cover_MiddleTop_Back__Cover_MiddleTop_Back__Cover_MiddleTop_Back.stl" scale="1 1 1" />
+            </geometry>
+            <material name="0.894118_0.894118_0.894118_0.000000_0.000000">
+                <color rgba="0.894118 0.894118 0.894118 1" />
+            </material>
+        </visual>
+    </link>
+    <link name="cover_middletop_front__cover_middletop_front__cover_middletop_front__cover_middletop_front">
+        <inertial>
+            <mass value="0.000601809" />
+            <origin xyz="0.0181183 -1.01578 -7.5e-05" rpy="0 -0 0" />
+            <inertia ixx="5.33508e-06" ixy="5.34627e-11" ixz="0" iyy="2.59965e-07" iyz="0" izz="5.1563e-06" />
+        </inertial>
+        <visual>
+            <origin xyz="0 0 0" rpy="0 -0 0" />
+            <geometry>
+                <mesh filename="Cover_MiddleTop_Front__Cover_MiddleTop_Front__Cover_MiddleTop_Front__Cover_MiddleTop_Front.stl" scale="1 1 1" />
+            </geometry>
+            <material name="0.894118_0.894118_0.894118_0.000000_0.000000">
+                <color rgba="0.894118 0.894118 0.894118 1" />
+            </material>
+        </visual>
+    </link>
+    <link name="cover_top_front__cover_top_front__cover_top_front__cover_top_front">
+        <inertial>
+            <mass value="0.000494583" />
+            <origin xyz="0.0184763 -1.30736 2.43867e-07" rpy="0 -0 0" />
+            <inertia ixx="3.02304e-06" ixy="5.53452e-09" ixz="-1.30243e-15" iyy="2.12533e-07" iyz="-3.11268e-13" izz="2.87685e-06" />
+        </inertial>
+        <visual>
+            <origin xyz="0 0 0" rpy="0 -0 0" />
+            <geometry>
+                <mesh filename="Cover_Top_Front__Cover_Top_Front__Cover_Top_Front__Cover_Top_Front.stl" scale="1 1 1" />
+            </geometry>
+            <material name="0.894118_0.894118_0.894118_0.000000_0.000000">
+                <color rgba="0.894118 0.894118 0.894118 1" />
+            </material>
+        </visual>
+    </link>
+    <link name="head__head__head__head">
+        <inertial>
+            <mass value="0.000627862" />
+            <origin xyz="-0.0040165 -1.44214 2.73596e-07" rpy="0 -0 0" />
+            <inertia ixx="1.60713e-06" ixy="2.67725e-07" ixz="-1.8791e-13" iyy="5.40677e-07" iyz="9.26065e-13" izz="1.67139e-06" />
+        </inertial>
+        <visual>
+            <origin xyz="0 0 0" rpy="0 -0 0" />
+            <geometry>
+                <mesh filename="Head__Head__Head__Head.stl" scale="1 1 1" />
+            </geometry>
+            <material name="0.894118_0.894118_0.894118_0.000000_0.000000">
+                <color rgba="0.894118 0.894118 0.894118 1" />
+            </material>
+        </visual>
+    </link>
+    <link name="head_cover__head_cover__head_cover__head_cover">
+        <inertial>
+            <mass value="0.000122005" />
+            <origin xyz="0.0313707 -1.51213 -6.7635e-07" rpy="0 -0 0" />
+            <inertia ixx="2.13945e-07" ixy="6.98187e-09" ixz="7.62813e-13" iyy="2.05293e-07" iyz="4.98525e-13" izz="5.79999e-08" />
+        </inertial>
+        <visual>
+            <origin xyz="0 0 0" rpy="0 -0 0" />
+            <geometry>
+                <mesh filename="Head_Cover__Head_Cover__Head_Cover__Head_Cover.stl" scale="1 1 1" />
+            </geometry>
+            <material name="0.894118_0.894118_0.894118_0.000000_0.000000">
+                <color rgba="0.894118 0.894118 0.894118 1" />
+            </material>
+        </visual>
+    </link>
+    <link name="left_wheel_cap__left_wheel_cap">
+        <inertial>
+            <mass value="0.000172835" />
+            <origin xyz="-0.0113 -0.0069695 0.173337" rpy="0 -0 0" />
+            <inertia ixx="3.1705e-07" ixy="0" ixz="0" iyy="3.1705e-07" iyz="0" izz="5.46462e-07" />
+        </inertial>
+        <visual>
+            <origin xyz="0 0 0" rpy="0 -0 0" />
+            <geometry>
+                <mesh filename="Left_wheel_cap__Left_wheel_cap.stl" scale="1 1 1" />
+            </geometry>
+            <material name="0.301961_0.301961_0.301961_0.000000_0.000000">
+                <color rgba="0.301961 0.301961 0.301961 1" />
+            </material>
+        </visual>
+    </link>
+    <link name="left_wheel_tire__left_wheel_tire">
+        <inertial>
+            <mass value="0.000384041" />
+            <origin xyz="-0.0113 -0.0069695 0.161099" rpy="0 -0 0" />
+            <inertia ixx="1.08073e-06" ixy="9.41287e-14" ixz="-1.53881e-13" iyy="1.08073e-06" iyz="2.47233e-14" izz="2.05949e-06" />
+        </inertial>
+        <visual>
+            <origin xyz="0 0 0" rpy="0 -0 0" />
+            <geometry>
+                <mesh filename="Left_Wheel_Tire__Left_Wheel_Tire.stl" scale="1 1 1" />
+            </geometry>
+            <material name="0.301961_0.301961_0.301961_0.000000_0.000000">
+                <color rgba="0.301961 0.301961 0.301961 1" />
+            </material>
+        </visual>
+    </link>
+    <link name="main_extrusion__main_extrusion__main_extrusion__main_extrusion">
+        <inertial>
+            <mass value="0.000818503" />
+            <origin xyz="-0.0113 -0.77 8.41894e-16" rpy="0 -0 0" />
+            <inertia ixx="0.000101652" ixy="0" ixz="0" iyy="2.59807e-07" iyz="0" izz="0.000101652" />
+        </inertial>
+        <visual>
+            <origin xyz="0 0 0" rpy="0 -0 0" />
+            <geometry>
+                <mesh filename="Main_Extrusion__Main_Extrusion__Main_Extrusion__Main_Extrusion.stl" scale="1 1 1" />
+            </geometry>
+            <material name="0.301961_0.301961_0.301961_0.000000_0.000000">
+                <color rgba="0.301961 0.301961 0.301961 1" />
+            </material>
+        </visual>
+    </link>
+    <link name="mirror30__mirror30">
+        <inertial>
+            <mass value="0.276482" />
+            <origin xyz="0.00724413 -0.049289 3.78896e-08" rpy="0 -0 0" />
+            <inertia ixx="0.00430629" ixy="-7.84455e-05" ixz="-2.45395e-10" iyy="0.00456252" iyz="-1.27884e-09" izz="0.0021062" />
+        </inertial>
+        <visual>
+            <origin xyz="0 0 0" rpy="0 -0 0" />
+            <geometry>
+                <mesh filename="Mirror30__Mirror30.stl" scale="1 1 1" />
+            </geometry>
+            <material name="1.000000_1.000000_1.000000_0.000000_0.000000">
+                <color rgba="1 1 1 1" />
+            </material>
+        </visual>
+    </link>
+    <link name="right_wheel_cap__right_wheel_cap">
+        <inertial>
+            <mass value="0.000172835" />
+            <origin xyz="-0.0113 -0.0069695 -0.173337" rpy="0 -0 0" />
+            <inertia ixx="3.1705e-07" ixy="0" ixz="0" iyy="3.1705e-07" iyz="0" izz="5.46462e-07" />
+        </inertial>
+        <visual>
+            <origin xyz="0 0 0" rpy="0 -0 0" />
+            <geometry>
+                <mesh filename="Right_Wheel_Cap__Right_Wheel_Cap.stl" scale="1 1 1" />
+            </geometry>
+            <material name="0.301961_0.301961_0.301961_0.000000_0.000000">
+                <color rgba="0.301961 0.301961 0.301961 1" />
+            </material>
+        </visual>
+    </link>
+    <link name="right_wheel_tire__right_wheel_tire">
+        <inertial>
+            <mass value="0.000384041" />
+            <origin xyz="-0.0113 -0.0069695 -0.161099" rpy="0 -0 0" />
+            <inertia ixx="1.08073e-06" ixy="1.03255e-13" ixz="1.64731e-13" iyy="1.08073e-06" iyz="-2.04503e-14" izz="2.05949e-06" />
+        </inertial>
+        <visual>
+            <origin xyz="0 0 0" rpy="0 -0 0" />
+            <geometry>
+                <mesh filename="Right_Wheel_Tire__Right_Wheel_Tire.stl" scale="1 1 1" />
+            </geometry>
+            <material name="0.301961_0.301961_0.301961_0.000000_0.000000">
+                <color rgba="0.301961 0.301961 0.301961 1" />
+            </material>
+        </visual>
+    </link>
+    <link name="root" />
+    <link name="top_cover_back__top_cover_back__top_cover_back__top_cover_back">
+        <inertial>
+            <mass value="0.000494579" />
+            <origin xyz="-0.0405335 -1.30539 1.66315e-07" rpy="0 -0 0" />
+            <inertia ixx="3.02299e-06" ixy="-5.53625e-09" ixz="1.59093e-13" iyy="2.12529e-07" iyz="-4.45288e-12" izz="2.87681e-06" />
+        </inertial>
+        <visual>
+            <origin xyz="0 0 0" rpy="0 -0 0" />
+            <geometry>
+                <mesh filename="Top_Cover_back__Top_Cover_back__Top_Cover_back__Top_Cover_back.stl" scale="1 1 1" />
+            </geometry>
+            <material name="0.894118_0.894118_0.894118_0.000000_0.000000">
+                <color rgba="0.894118 0.894118 0.894118 1" />
+            </material>
+        </visual>
+    </link>
+    <joint name="base_extrusion_fastened_joint" type="fixed">
+        <origin xyz="1.73472e-18 -6.93889e-18 1.73472e-18" rpy="6.93889e-18 5.42101e-18 1.88079e-35" />
+        <axis xyz="-0 -0 -1" />
+        <parent link="cover_top_front__cover_top_front__cover_top_front__cover_top_front" />
+        <child link="top_cover_back__top_cover_back__top_cover_back__top_cover_back" />
+    </joint>
+    <joint name="base_extrusion_fastened_joint_1" type="fixed">
+        <origin xyz="1.73472e-18 -6.93889e-18 0" rpy="-4.51029e-51 -1.17094e-17 7.70372e-34" />
+        <axis xyz="0 0 1" />
+        <parent link="base_extrusion__base_extrusion__base_extrusion__base_extrusion" />
+        <child link="base_extrusion__base_extrusion" />
+    </joint>
+    <joint name="base_extrusion_fastened_joint_10" type="fixed">
+        <origin xyz="1.73472e-18 -6.93889e-18 0" rpy="-4.51029e-51 -1.17094e-17 7.70372e-34" />
+        <axis xyz="0 0 1" />
+        <parent link="battery_terminal__battery_terminal" />
+        <child link="mirror30__mirror30" />
+    </joint>
+    <joint name="base_extrusion_fastened_joint_11" type="fixed">
+        <origin xyz="1.73472e-18 -6.93889e-18 0" rpy="-4.51029e-51 -1.17094e-17 7.70372e-34" />
+        <axis xyz="0 0 1" />
+        <parent link="head_cover__head_cover__head_cover__head_cover" />
+        <child link="right_wheel_tire__right_wheel_tire" />
+    </joint>
+    <joint name="base_extrusion_fastened_joint_12" type="fixed">
+        <origin xyz="1.73472e-18 -6.93889e-18 1.73472e-18" rpy="6.93889e-18 5.42101e-18 1.88079e-35" />
+        <axis xyz="-0 -0 -1" />
+        <parent link="bottom_cover_front__bottom_cover_front__bottom_cover_front__bottom_cover_front" />
+        <child link="cover_middlebot_front__cover_middlebot_front__cover_middlebot_front__cover_middlebot_front" />
+    </joint>
+    <joint name="base_extrusion_fastened_joint_13" type="fixed">
+        <origin xyz="1.73472e-18 -6.93889e-18 0" rpy="-4.51029e-51 -1.17094e-17 7.70372e-34" />
+        <axis xyz="0 0 1" />
+        <parent link="right_wheel_tire__right_wheel_tire" />
+        <child link="left_wheel_tire__left_wheel_tire" />
+    </joint>
+    <joint name="base_extrusion_fastened_joint_14" type="fixed">
+        <origin xyz="1.73472e-18 -6.93889e-18 1.73472e-18" rpy="6.93889e-18 5.42101e-18 1.88079e-35" />
+        <axis xyz="-0 -0 -1" />
+        <parent link="cover_middlebot_back__cover_middlebot_back__cover_middlebot_back__cover_middlebot_back" />
+        <child link="bottom_cover_back__bottom_cover_back__bottom_cover_back__bottom_cover_back" />
+    </joint>
+    <joint name="base_extrusion_fastened_joint_15" type="fixed">
+        <origin xyz="1.73472e-18 -6.93889e-18 0" rpy="-4.51029e-51 -1.17094e-17 7.70372e-34" />
+        <axis xyz="0 0 1" />
+        <parent link="left_wheel_cap__left_wheel_cap" />
+        <child link="head__head__head__head" />
+    </joint>
+    <joint name="base_extrusion_fastened_joint_16" type="fixed">
+        <origin xyz="1.73472e-18 -6.93889e-18 0" rpy="-4.51029e-51 -1.17094e-17 7.70372e-34" />
+        <axis xyz="0 0 1" />
+        <parent link="right_wheel_cap__right_wheel_cap" />
+        <child link="left_wheel_cap__left_wheel_cap" />
+    </joint>
+    <joint name="base_extrusion_fastened_joint_17" type="fixed">
+        <origin xyz="1.73472e-18 -6.93889e-18 1.73472e-18" rpy="6.93889e-18 5.42101e-18 1.88079e-35" />
+        <axis xyz="-0 -0 -1" />
+        <parent link="cover_middlebot_front__cover_middlebot_front__cover_middlebot_front__cover_middlebot_front" />
+        <child link="cover_middletop_front__cover_middletop_front__cover_middletop_front__cover_middletop_front" />
+    </joint>
+    <joint name="base_extrusion_fastened_joint_18" type="fixed">
+        <origin xyz="1.73472e-18 -6.93889e-18 0" rpy="-4.51029e-51 -1.17094e-17 7.70372e-34" />
+        <axis xyz="0 0 1" />
+        <parent link="mirror30__mirror30" />
+        <child link="right_wheel_cap__right_wheel_cap" />
+    </joint>
+    <joint name="base_extrusion_fastened_joint_19" type="fixed">
+        <origin xyz="1.73472e-18 -6.93889e-18 0" rpy="-4.51029e-51 -1.17094e-17 7.70372e-34" />
+        <axis xyz="0 0 1" />
+        <parent link="main_extrusion__main_extrusion__main_extrusion__main_extrusion" />
+        <child link="base_extrusion__base_extrusion__base_extrusion__base_extrusion" />
+    </joint>
+    <joint name="base_extrusion_fastened_joint_2" type="fixed">
+        <origin xyz="1.73472e-18 -6.93889e-18 1.73472e-18" rpy="6.93889e-18 5.42101e-18 1.88079e-35" />
+        <axis xyz="-0 -0 -1" />
+        <parent link="cover_middletop_front__cover_middletop_front__cover_middletop_front__cover_middletop_front" />
+        <child link="cover_top_front__cover_top_front__cover_top_front__cover_top_front" />
+    </joint>
+    <joint name="base_extrusion_fastened_joint_20" type="fixed">
+        <origin xyz="1.73472e-18 -6.93889e-18 1.73472e-18" rpy="6.93889e-18 5.42101e-18 1.88079e-35" />
+        <axis xyz="-0 -0 -1" />
+        <parent link="cover_middletop_back__cover_middletop_back__cover_middletop_back__cover_middletop_back" />
+        <child link="cover_middlebot_back__cover_middlebot_back__cover_middlebot_back__cover_middlebot_back" />
+    </joint>
+    <joint name="base_extrusion_fastened_joint_3" type="fixed">
+        <origin xyz="1.73472e-18 -6.93889e-18 0" rpy="-4.51029e-51 -1.17094e-17 7.70372e-34" />
+        <axis xyz="0 0 1" />
+        <parent link="base_extrusion__base_extrusion" />
+        <child link="base_print__base_print" />
+    </joint>
+    <joint name="base_extrusion_fastened_joint_4" type="fixed">
+        <origin xyz="0.004 0.0272667 0.000135341" rpy="-7.63278e-16 -2.47372e-15 -2.41652e-13" />
+        <axis xyz="-0 -0 -1" />
+        <parent link="base_plate__base_plate" />
+        <child link="bottom_cover_front__bottom_cover_front__bottom_cover_front__bottom_cover_front" />
+    </joint>
+    <joint name="base_extrusion_fastened_joint_5" type="fixed">
+        <origin xyz="1.73472e-18 -6.93889e-18 1.73472e-18" rpy="6.93889e-18 5.42101e-18 1.88079e-35" />
+        <axis xyz="-0 -0 -1" />
+        <parent link="top_cover_back__top_cover_back__top_cover_back__top_cover_back" />
+        <child link="cover_middletop_back__cover_middletop_back__cover_middletop_back__cover_middletop_back" />
+    </joint>
+    <joint name="base_extrusion_fastened_joint_6" type="fixed">
+        <origin xyz="1.73472e-18 -6.93889e-18 0" rpy="-4.51029e-51 -1.17094e-17 7.70372e-34" />
+        <axis xyz="0 0 1" />
+        <parent link="head__head__head__head" />
+        <child link="camera_cover__camera_cover__camera_cover__camera_cover" />
+    </joint>
+    <joint name="base_extrusion_fastened_joint_7" type="fixed">
+        <origin xyz="1.73472e-18 -6.93889e-18 0" rpy="-4.51029e-51 -1.17094e-17 7.70372e-34" />
+        <axis xyz="0 0 1" />
+        <parent link="camera_cover__camera_cover__camera_cover__camera_cover" />
+        <child link="head_cover__head_cover__head_cover__head_cover" />
+    </joint>
+    <joint name="base_extrusion_fastened_joint_8" type="fixed">
+        <origin xyz="1.73472e-18 -6.93889e-18 0" rpy="-4.51029e-51 -1.17094e-17 7.70372e-34" />
+        <axis xyz="0 0 1" />
+        <parent link="base_plate__base_plate" />
+        <child link="main_extrusion__main_extrusion__main_extrusion__main_extrusion" />
+    </joint>
+    <joint name="base_extrusion_fastened_joint_9" type="fixed">
+        <origin xyz="1.73472e-18 -6.93889e-18 0" rpy="-4.51029e-51 -1.17094e-17 7.70372e-34" />
+        <axis xyz="0 0 1" />
+        <parent link="base_print__base_print" />
+        <child link="battery_terminal__battery_terminal" />
+    </joint>
+    <joint name="fixed_node_to_root_joint" type="fixed">
+        <origin xyz="0.011339824976477019 6.451603370418932e-07 0.07762935366097448" rpy="-1.570798682849108 -5.0519484021009344e-05 1.7894013210692803e-07" />
+        <axis xyz="0 0 1" />
+        <parent link="root" />
+        <child link="base_plate__base_plate" />
+    </joint>
+    <link name="bicep__bicep">
+        <inertial>
+            <mass value="0.000648254" />
+            <origin xyz="-0.0787372667601 -0.0223313769042 0.042560201814" rpy="1.62259962837 -1.31221410986 -1.36262971785" />
+            <inertia ixx="1.98462e-06" ixy="-1.19415e-08" ixz="-3.00584e-07" iyy="2.05895e-06" iyz="-2.33691e-08" izz="4.31976e-07" />
+        </inertial>
+        <visual>
+            <origin xyz="-1.08044238915 -0.390199904715 0.0283732162424" rpy="1.62259962837 -1.31221410986 -1.36262971785" />
+            <geometry>
+                <mesh filename="Bicep__Bicep.stl" scale="1 1 1" />
+            </geometry>
+            <material name="1.000000_1.000000_1.000000_0.000000_0.000000">
+                <color rgba="1 1 1 1" />
+            </material>
+        </visual>
+    </link>
+    <link name="bicep_cover__bicep_cover">
+        <inertial>
+            <mass value="9.82442e-05" />
+            <origin xyz="-0.0254793 0.097391 -1.06421" rpy="0 -0 0" />
+            <inertia ixx="1.63933e-07" ixy="1.39425e-09" ixz="6.71533e-09" iyy="1.58641e-07" iyz="1.39869e-09" izz="1.28411e-07" />
+        </inertial>
+        <visual>
+            <origin xyz="0 0 0" rpy="0 -0 0" />
+            <geometry>
+                <mesh filename="Bicep_Cover__Bicep_Cover.stl" scale="1 1 1" />
+            </geometry>
+            <material name="1.000000_1.000000_1.000000_0.000000_0.000000">
+                <color rgba="1 1 1 1" />
+            </material>
+        </visual>
+    </link>
+    <link name="forearm__forearm">
+        <inertial>
+            <mass value="0.000301123" />
+            <origin xyz="-0.0213131063831 -0.066102529716 0.0333010672315" rpy="1.57498814512 -0.00351664735729 -0.00353141945616" />
+            <inertia ixx="5.01848e-07" ixy="2.95957e-10" ixz="3.83971e-08" iyy="4.49335e-07" iyz="-4.78003e-11" izz="1.87379e-07" />
+        </inertial>
+        <visual>
+            <origin xyz="-0.000283681312204 -0.986812299969 -0.0688189770928" rpy="1.57498814512 -0.00351664735729 -0.00353141945616" />
+            <geometry>
+                <mesh filename="Forearm__Forearm.stl" scale="1 1 1" />
+            </geometry>
+            <material name="1.000000_1.000000_1.000000_0.000000_0.000000">
+                <color rgba="1 1 1 1" />
+            </material>
+        </visual>
+    </link>
+    <link name="forearm_cover__forearm_cover">
+        <inertial>
+            <mass value="7.56956e-05" />
+            <origin xyz="-0.0228592 0.097541 -0.910018" rpy="0 -0 0" />
+            <inertia ixx="1.06539e-07" ixy="-6.81589e-10" ixz="-1.11951e-08" iyy="1.00261e-07" iyz="9.52224e-11" izz="7.30466e-08" />
+        </inertial>
+        <visual>
+            <origin xyz="0 0 0" rpy="0 -0 0" />
+            <geometry>
+                <mesh filename="Forearm_Cover__Forearm_Cover.stl" scale="1 1 1" />
+            </geometry>
+            <material name="1.000000_1.000000_1.000000_0.000000_0.000000">
+                <color rgba="1 1 1 1" />
+            </material>
+        </visual>
+    </link>
+    <link name="forearm_rotation__forearm_rotation">
+        <inertial>
+            <mass value="6.64039e-05" />
+            <origin xyz="3.56773680358e-05 2.45811617368e-05 -0.021805026184" rpy="-3.13751960024 0.00950246880054 -2.33171357261" />
+            <inertia ixx="1.98062e-08" ixy="-6.10097e-10" ixz="-2.26654e-11" iyy="2.26801e-08" iyz="-1.81439e-11" izz="1.64395e-08" />
+        </inertial>
+        <visual>
+            <origin xyz="0.064108392959 -0.080583299943 -0.860955037204" rpy="-3.13751960024 0.00950246880054 -2.33171357261" />
+            <geometry>
+                <mesh filename="Forearm_Rotation__Forearm_Rotation.stl" scale="1 1 1" />
+            </geometry>
+            <material name="1.000000_1.000000_1.000000_0.000000_0.000000">
+                <color rgba="1 1 1 1" />
+            </material>
+        </visual>
+    </link>
+    <link name="hand__hand">
+        <inertial>
+            <mass value="0.00010405" />
+            <origin xyz="0.0104255916187 -0.0225964292538 -0.0208471676198" rpy="1.51922578538 0.199948606146 0.189956115004" />
+            <inertia ixx="7.4789e-08" ixy="-5.16645e-09" ixz="-1.57811e-08" iyy="1.01907e-07" iyz="-1.31927e-09" izz="7.6146e-08" />
+        </inertial>
+        <visual>
+            <origin xyz="0.158112192231 -0.771278690689 -0.0790064591971" rpy="1.51922578538 0.199948606146 0.189956115004" />
+            <geometry>
+                <mesh filename="Hand__Hand.stl" scale="1 1 1" />
+            </geometry>
+            <material name="1.000000_1.000000_1.000000_0.000000_0.000000">
+                <color rgba="1 1 1 1" />
+            </material>
+        </visual>
+    </link>
+    <link name="hand_motor_mount__hand_motor_mount">
+        <inertial>
+            <mass value="3.2881e-05" />
+            <origin xyz="-0.0211672 0.094284 -0.72929" rpy="0 -0 0" />
+            <inertia ixx="1.72406e-08" ixy="1.50153e-09" ixz="-1.02954e-10" iyy="1.05109e-08" iyz="2.94986e-10" izz="2.06122e-08" />
+        </inertial>
+        <visual>
+            <origin xyz="0 0 0" rpy="0 -0 0" />
+            <geometry>
+                <mesh filename="Hand_Motor_Mount__Hand_Motor_Mount.stl" scale="1 1 1" />
+            </geometry>
+            <material name="1.000000_1.000000_1.000000_0.000000_0.000000">
+                <color rgba="1 1 1 1" />
+            </material>
+        </visual>
+    </link>
+    <link name="left_finger__left_finger">
+        <inertial>
+            <mass value="4.61241e-05" />
+            <origin xyz="-0.0340813705584 -0.00413193742066 -0.0245907132496" rpy="1.73578349795 -1.36619674515 -1.53050584004" />
+            <inertia ixx="4.42148e-08" ixy="-3.17314e-09" ixz="-4.59458e-09" iyy="5.79589e-08" iyz="-2.33248e-09" izz="1.93676e-08" />
+        </inertial>
+        <visual>
+            <origin xyz="-0.700466770107 -0.222748940096 -0.0540855256445" rpy="1.73578349795 -1.36619674515 -1.53050584004" />
+            <geometry>
+                <mesh filename="Left_Finger__Left_Finger.stl" scale="1 1 1" />
+            </geometry>
+            <material name="1.000000_1.000000_1.000000_0.000000_0.000000">
+                <color rgba="1 1 1 1" />
+            </material>
+        </visual>
+    </link>
+    <link name="right_finger__right_finger">
+        <inertial>
+            <mass value="4.56895e-05" />
+            <origin xyz="0.0348601347938 -0.000281218324584 0.024355357095" rpy="-1.40580915564 1.36619674515 -1.20729352421" />
+            <inertia ixx="4.32651e-08" ixy="-1.97525e-09" ixz="-5.65854e-09" iyy="5.6674e-08" iyz="5.17454e-09" izz="1.99754e-08" />
+        </inertial>
+        <visual>
+            <origin xyz="0.736527086189 0.0353731073513 0.0544734810646" rpy="-1.40580915564 1.36619674515 -1.20729352421" />
+            <geometry>
+                <mesh filename="Right_Finger__Right_Finger.stl" scale="1 1 1" />
+            </geometry>
+            <material name="1.000000_1.000000_1.000000_0.000000_0.000000">
+                <color rgba="1 1 1 1" />
+            </material>
+        </visual>
+    </link>
+    <link name="shoulder__shoulder">
+        <inertial>
+            <mass value="0.00070326" />
+            <origin xyz="-0.00207733 -0.0439747 -0.0719634" rpy="3.14159265359 -0 0" />
+            <inertia ixx="1.99165e-06" ixy="-1.80661e-08" ixz="-2.82108e-08" iyy="1.91812e-06" iyz="-9.89775e-08" izz="5.04519e-07" />
+        </inertial>
+        <visual>
+            <origin xyz="0.0112151 0.0286011 -1.35824" rpy="3.14159265359 -0 0" />
+            <geometry>
+                <mesh filename="Shoulder__Shoulder.stl" scale="1 1 1" />
+            </geometry>
+            <material name="1.000000_1.000000_1.000000_0.000000_0.000000">
+                <color rgba="1 1 1 1" />
+            </material>
+        </visual>
+    </link>
+    <link name="shoulder_cover__shoulder_cover">
+        <inertial>
+            <mass value="0.000573942" />
+            <origin xyz="-0.0111642 0.0752512 -1.30987" rpy="0 -0 0" />
+            <inertia ixx="9.07984e-07" ixy="0" ixz="0" iyy="9.07984e-07" iyz="0" izz="4.31252e-07" />
+        </inertial>
+        <visual>
+            <origin xyz="0 0 0" rpy="0 -0 0" />
+            <geometry>
+                <mesh filename="Shoulder_Cover__Shoulder_Cover.stl" scale="1 1 1" />
+            </geometry>
+            <material name="1.000000_1.000000_1.000000_0.000000_0.000000">
+                <color rgba="1 1 1 1" />
+            </material>
+        </visual>
+    </link>
+    <link name="shoulder_knuckle__shoulder_knuckle">
+        <inertial>
+            <mass value="0.000133846" />
+            <origin xyz="-0.00359972921856 -0.0351324051939 -0.0326790238964" rpy="1.84139361473 0.252680186341 0.331038749783" />
+            <inertia ixx="1.37951e-07" ixy="7.15787e-09" ixz="2.46863e-08" iyy="1.44265e-07" iyz="1.32013e-08" izz="1.64025e-07" />
+        </inertial>
+        <visual>
+            <origin xyz="0.28566220547 -1.1074513874 -0.425773343683" rpy="1.84139361473 0.252680186341 0.331038749783" />
+            <geometry>
+                <mesh filename="Shoulder_Knuckle__Shoulder_Knuckle.stl" scale="1 1 1" />
+            </geometry>
+            <material name="1.000000_1.000000_1.000000_0.000000_0.000000">
+                <color rgba="1 1 1 1" />
+            </material>
+        </visual>
+    </link>
+    <link name="wrist_cam__wrist_cam">
+        <inertial>
+            <mass value="2.92471e-06" />
+            <origin xyz="0.0335636 0.104461 -0.727313" rpy="0 -0 0" />
+            <inertia ixx="1.39563e-10" ixy="7.40866e-13" ixz="-1.46949e-11" iyy="1.40019e-10" iyz="-2.89379e-12" izz="1.38867e-10" />
+        </inertial>
+        <visual>
+            <origin xyz="0 0 0" rpy="0 -0 0" />
+            <geometry>
+                <mesh filename="Wrist_Cam__Wrist_Cam.stl" scale="1 1 1" />
+            </geometry>
+            <material name="0.792157_0.819608_0.933333_0.000000_0.000000">
+                <color rgba="0.792157 0.819608 0.933333 1" />
+            </material>
+        </visual>
+    </link>
+    <link name="wrist_knuckle__wrist_knuckle">
+        <inertial>
+            <mass value="4.23359e-05" />
+            <origin xyz="-0.0218343936983 -0.0056066285786 -0.0210499708762" rpy="1.62153197318 -1.36982431799 -1.41970853491" />
+            <inertia ixx="2.14469e-08" ixy="-3.06485e-11" ixz="1.61189e-11" iyy="2.15892e-08" iyz="-3.44211e-11" izz="2.23226e-08" />
+        </inertial>
+        <visual>
+            <origin xyz="-0.791586194978 -0.264038463999 -0.0274632002715" rpy="1.62153197318 -1.36982431799 -1.41970853491" />
+            <geometry>
+                <mesh filename="Wrist_Knuckle__Wrist_Knuckle.stl" scale="1 1 1" />
+            </geometry>
+            <material name="1.000000_1.000000_1.000000_0.000000_0.000000">
+                <color rgba="1 1 1 1" />
+            </material>
+        </visual>
+    </link>
+    <link name="l_shoulder__shoulder">
+        <inertial>
+            <mass value="0.00070326" />
+            <origin xyz="-0.00207733 0.0439747 -0.0719634" rpy="3.14159265359 -0 0" />
+            <inertia ixx="1.99165e-06" ixy="1.80661e-08" ixz="-2.82108e-08" iyy="1.91812e-06" iyz="9.89775e-08" izz="5.04519e-07" />
+        </inertial>
+        <visual>
+            <origin xyz="0.0112151 -0.0286011 -1.35824" rpy="3.14159265359 -0 0" />
+            <geometry>
+                <mesh filename="Shoulder__Shoulder_Mirrored.stl" scale="1 1 1" />
+            </geometry>
+            <material name="1.000000_1.000000_1.000000_0.000000_0.000000">
+                <color rgba="1 1 1 1" />
+            </material>
+        </visual>
+    </link>
+    <link name="l_shoulder_knuckle__shoulder_knuckle">
+        <inertial>
+            <mass value="0.000133846" />
+            <origin xyz="-0.0206836549739 -0.028625694089 0.0326790238964" rpy="1.30019903886 -0.252680186341 -0.19255986606" />
+            <inertia ixx="1.37951e-07" ixy="-7.15787e-09" ixz="2.46863e-08" iyy="1.44265e-07" iyz="-1.32013e-08" izz="1.64025e-07" />
+        </inertial>
+        <visual>
+            <origin xyz="-0.306334790828 -1.10191218662 0.425773343683" rpy="1.30019903886 -0.252680186341 -0.19255986606" />
+            <geometry>
+                <mesh filename="Shoulder_Knuckle__Shoulder_Knuckle_Mirrored.stl" scale="1 1 1" />
+            </geometry>
+            <material name="1.000000_1.000000_1.000000_0.000000_0.000000">
+                <color rgba="1 1 1 1" />
+            </material>
+        </visual>
+    </link>
+    <link name="l_bicep__bicep">
+        <inertial>
+            <mass value="0.000648254" />
+            <origin xyz="-0.0787372667601 0.0223313769042 0.042560201814" rpy="-1.62259962837 -1.31221410986 1.36262971785" />
+            <inertia ixx="1.98462e-06" ixy="1.19415e-08" ixz="-3.00584e-07" iyy="2.05895e-06" iyz="2.33691e-08" izz="4.31976e-07" />
+        </inertial>
+        <visual>
+            <origin xyz="-1.08044238915 0.390199904715 0.0283732162424" rpy="-1.62259962837 -1.31221410986 1.36262971785" />
+            <geometry>
+                <mesh filename="Bicep__Bicep_Mirrored.stl" scale="1 1 1" />
+            </geometry>
+            <material name="1.000000_1.000000_1.000000_0.000000_0.000000">
+                <color rgba="1 1 1 1" />
+            </material>
+        </visual>
+    </link>
+    <link name="l_forearm__forearm">
+        <inertial>
+            <mass value="0.000301123" />
+            <origin xyz="-0.0208476604015 -0.0662507961789 -0.0333010672315" rpy="1.56660450847 0.00351664735729 0.00350193705058" />
+            <inertia ixx="5.01848e-07" ixy="-2.95957e-10" ixz="3.83971e-08" iyy="4.49335e-07" iyz="4.78003e-11" izz="1.87379e-07" />
+        </inertial>
+        <visual>
+            <origin xyz="0.00665687119234 -0.986789887418 0.0688189770928" rpy="1.56660450847 0.00351664735729 0.00350193705058" />
+            <geometry>
+                <mesh filename="Forearm__Forearm_Mirrored.stl" scale="1 1 1" />
+            </geometry>
+            <material name="1.000000_1.000000_1.000000_0.000000_0.000000">
+                <color rgba="1 1 1 1" />
+            </material>
+        </visual>
+    </link>
+    <link name="l_forearm_rotation__forearm_rotation">
+        <inertial>
+            <mass value="6.64039e-05" />
+            <origin xyz="3.56773680358e-05 -2.45811617368e-05 -0.021805026184" rpy="3.13751960024 0.00950246880054 2.33171357261" />
+            <inertia ixx="1.98062e-08" ixy="6.10097e-10" ixz="-2.26654e-11" iyy="2.26801e-08" iyz="1.81439e-11" izz="1.64395e-08" />
+        </inertial>
+        <visual>
+            <origin xyz="0.064108392959 0.080583299943 -0.860955037204" rpy="3.13751960024 0.00950246880054 2.33171357261" />
+            <geometry>
+                <mesh filename="Forearm_Rotation__Forearm_Rotation_Mirrored.stl" scale="1 1 1" />
+            </geometry>
+            <material name="1.000000_1.000000_1.000000_0.000000_0.000000">
+                <color rgba="1 1 1 1" />
+            </material>
+        </visual>
+    </link>
+    <link name="l_wrist_knuckle__wrist_knuckle">
+        <inertial>
+            <mass value="4.23359e-05" />
+            <origin xyz="-0.0218343936983 0.0056066285786 -0.0210499708762" rpy="-1.62153197318 -1.36982431799 1.41970853491" />
+            <inertia ixx="2.14469e-08" ixy="3.06485e-11" ixz="1.61189e-11" iyy="2.15892e-08" iyz="3.44211e-11" izz="2.23226e-08" />
+        </inertial>
+        <visual>
+            <origin xyz="-0.791586194978 0.264038463999 -0.0274632002715" rpy="-1.62153197318 -1.36982431799 1.41970853491" />
+            <geometry>
+                <mesh filename="Wrist_Knuckle__Wrist_Knuckle_Mirrored.stl" scale="1 1 1" />
+            </geometry>
+            <material name="1.000000_1.000000_1.000000_0.000000_0.000000">
+                <color rgba="1 1 1 1" />
+            </material>
+        </visual>
+    </link>
+    <link name="l_hand__hand">
+        <inertial>
+            <mass value="0.00010405" />
+            <origin xyz="0.000792807952272 -0.024872937727 0.0208471676198" rpy="1.62236686821 -0.199948606146 -0.210459351552" />
+            <inertia ixx="7.4789e-08" ixy="5.16645e-09" ixz="-1.57811e-08" iyy="1.01907e-07" iyz="1.31927e-09" izz="7.6146e-08" />
+        </inertial>
+        <visual>
+            <origin xyz="-0.155039809149 -0.771902158063 0.0790064591971" rpy="1.62236686821 -0.199948606146 -0.210459351552" />
+            <geometry>
+                <mesh filename="Hand__Hand_Mirrored.stl" scale="1 1 1" />
+            </geometry>
+            <material name="1.000000_1.000000_1.000000_0.000000_0.000000">
+                <color rgba="1 1 1 1" />
+            </material>
+        </visual>
+    </link>
+    <link name="l_wrist_cam__wrist_cam">
+        <inertial>
+            <mass value="2.92471e-06" />
+            <origin xyz="0.0335636 -0.104461 -0.727313" rpy="0 -0 0" />
+            <inertia ixx="1.39563e-10" ixy="-7.40866e-13" ixz="-1.46949e-11" iyy="1.40019e-10" iyz="2.89379e-12" izz="1.38867e-10" />
+        </inertial>
+        <visual>
+            <origin xyz="0 0 0" rpy="0 -0 0" />
+            <geometry>
+                <mesh filename="Wrist_Cam__Wrist_Cam_Mirrored.stl" scale="1 1 1" />
+            </geometry>
+            <material name="0.792157_0.819608_0.933333_0.000000_0.000000">
+                <color rgba="0.792157 0.819608 0.933333 1" />
+            </material>
+        </visual>
+    </link>
+    <link name="l_hand_motor_mount__hand_motor_mount">
+        <inertial>
+            <mass value="3.2881e-05" />
+            <origin xyz="-0.0211672 -0.094284 -0.72929" rpy="0 -0 0" />
+            <inertia ixx="1.72406e-08" ixy="-1.50153e-09" ixz="-1.02954e-10" iyy="1.05109e-08" iyz="-2.94986e-10" izz="2.06122e-08" />
+        </inertial>
+        <visual>
+            <origin xyz="0 0 0" rpy="0 -0 0" />
+            <geometry>
+                <mesh filename="Hand_Motor_Mount__Hand_Motor_Mount_Mirrored.stl" scale="1 1 1" />
+            </geometry>
+            <material name="1.000000_1.000000_1.000000_0.000000_0.000000">
+                <color rgba="1 1 1 1" />
+            </material>
+        </visual>
+    </link>
+    <link name="l_right_finger__right_finger">
+        <inertial>
+            <mass value="4.56895e-05" />
+            <origin xyz="-0.0319460930064 0.0139554728768 -0.024355357095" rpy="-1.73578349795 -1.36619674515 1.53050593826" />
+            <inertia ixx="4.32651e-08" ixy="1.97525e-09" ixz="-5.65854e-09" iyy="5.6674e-08" iyz="-5.17454e-09" izz="1.99754e-08" />
+        </inertial>
+        <visual>
+            <origin xyz="-0.691191962618 0.256860032363 -0.0544734810646" rpy="-1.73578349795 -1.36619674515 1.53050593826" />
+            <geometry>
+                <mesh filename="Right_Finger__Right_Finger_Mirrored.stl" scale="1 1 1" />
+            </geometry>
+            <material name="1.000000_1.000000_1.000000_0.000000_0.000000">
+                <color rgba="1 1 1 1" />
+            </material>
+        </visual>
+    </link>
+    <link name="l_left_finger__left_finger">
+        <inertial>
+            <mass value="4.61241e-05" />
+            <origin xyz="0.0329639290484 -0.0095912516224 0.0245907132496" rpy="1.40580915564 1.36619674515 1.20729362243" />
+            <inertia ixx="4.42148e-08" ixy="3.17314e-09" ixz="-4.59458e-09" iyy="5.79589e-08" iyz="2.33248e-09" izz="1.93676e-08" />
+        </inertial>
+        <visual>
+            <origin xyz="0.731653422859 -0.0703850492471 0.0540855256445" rpy="1.40580915564 1.36619674515 1.20729362243" />
+            <geometry>
+                <mesh filename="Left_Finger__Left_Finger_Mirrored.stl" scale="1 1 1" />
+            </geometry>
+            <material name="1.000000_1.000000_1.000000_0.000000_0.000000">
+                <color rgba="1 1 1 1" />
+            </material>
+        </visual>
+    </link>
+    <link name="l_forearm_cover__forearm_cover">
+        <inertial>
+            <mass value="7.56956e-05" />
+            <origin xyz="-0.0228592 -0.097541 -0.910018" rpy="0 -0 0" />
+            <inertia ixx="1.06539e-07" ixy="6.81589e-10" ixz="-1.11951e-08" iyy="1.00261e-07" iyz="-9.52224e-11" izz="7.30466e-08" />
+        </inertial>
+        <visual>
+            <origin xyz="0 0 0" rpy="0 -0 0" />
+            <geometry>
+                <mesh filename="Forearm_Cover__Forearm_Cover_Mirrored.stl" scale="1 1 1" />
+            </geometry>
+            <material name="1.000000_1.000000_1.000000_0.000000_0.000000">
+                <color rgba="1 1 1 1" />
+            </material>
+        </visual>
+    </link>
+    <link name="l_bicep_cover__bicep_cover">
+        <inertial>
+            <mass value="9.82442e-05" />
+            <origin xyz="-0.0254793 -0.097391 -1.06421" rpy="0 -0 0" />
+            <inertia ixx="1.63933e-07" ixy="-1.39425e-09" ixz="6.71533e-09" iyy="1.58641e-07" iyz="-1.39869e-09" izz="1.28411e-07" />
+        </inertial>
+        <visual>
+            <origin xyz="0 0 0" rpy="0 -0 0" />
+            <geometry>
+                <mesh filename="Bicep_Cover__Bicep_Cover_Mirrored.stl" scale="1 1 1" />
+            </geometry>
+            <material name="1.000000_1.000000_1.000000_0.000000_0.000000">
+                <color rgba="1 1 1 1" />
+            </material>
+        </visual>
+    </link>
+    <link name="l_shoulder_cover__shoulder_cover">
+        <inertial>
+            <mass value="0.000573942" />
+            <origin xyz="-0.0111642 -0.0752512 -1.30987" rpy="0 -0 0" />
+            <inertia ixx="9.07984e-07" ixy="-0" ixz="0" iyy="9.07984e-07" iyz="-0" izz="4.31252e-07" />
+        </inertial>
+        <visual>
+            <origin xyz="0 0 0" rpy="0 -0 0" />
+            <geometry>
+                <mesh filename="Shoulder_Cover__Shoulder_Cover_Mirrored.stl" scale="1 1 1" />
+            </geometry>
+            <material name="1.000000_1.000000_1.000000_0.000000_0.000000">
+                <color rgba="1 1 1 1" />
+            </material>
+        </visual>
+    </link>
+    <link name="arm_base">
+        <inertial>
+            <origin xyz="0 0 0" rpy="0 0 0" />
+            <mass value="1e-9" />
+            <inertia ixx="0" ixy="0" ixz="0" iyy="0" iyz="0" izz="0" />
+        </inertial>
+    </link>
+    <link name="right_eef">
+        <inertial>
+            <origin xyz="0 0 0" rpy="0 0 0" />
+            <mass value="1e-9" />
+            <inertia ixx="0" ixy="0" ixz="0" iyy="0" iyz="0" izz="0" />
+        </inertial>
+    </link>
+    <link name="left_eef">
+        <inertial>
+            <origin xyz="0 0 0" rpy="0 0 0" />
+            <mass value="1e-9" />
+            <inertia ixx="0" ixy="0" ixz="0" iyy="0" iyz="0" izz="0" />
+        </inertial>
+    </link>
+    <joint name="right_left_gripper" type="revolute">
+        <origin xyz="0.0413008234875 -0.0450475758206 -0.037214733194" rpy="1.57079641057 0.252467062787 1.80442239386" />
+        <axis xyz="0 0 1" />
+        <parent link="hand__hand" />
+        <child link="left_finger__left_finger" />
+        <limit lower="0" upper="1" effort="10" velocity="2" />
+    </joint>
+    <joint name="right_right_gripper" type="revolute">
+        <origin xyz="0.0413008570208 -0.0450475753712 -0.00313574940202" rpy="1.57079624551 0.15132620504 -1.33717030903" />
+        <axis xyz="0 0 1" />
+        <parent link="hand__hand" />
+        <child link="right_finger__right_finger" />
+        <limit lower="0" upper="1" effort="10" velocity="2" />
+        <mimic joint="right_left_gripper" multiplier="1" offset="0" />
+    </joint>
+    <joint name="rj0_fastened_joint" type="fixed">
+        <origin xyz="0.0112151 0.0286011 -1.35824" rpy="3.14159265359 1.46937e-39 -2.81907e-23" />
+        <axis xyz="-0 -0 -1" />
+        <parent link="shoulder__shoulder" />
+        <child link="shoulder_cover__shoulder_cover" />
+    </joint>
+    <joint name="rj1" type="revolute">
+        <origin xyz="-0.00793876834457 -0.0857475264263 -0.144638109056" rpy="1.30019908589 0.252679529658 -0.331041194688" />
+        <axis xyz="0 0 1" />
+        <parent link="shoulder__shoulder" />
+        <child link="shoulder_knuckle__shoulder_knuckle" />
+        <limit lower="-2.094395" upper="2.094395" velocity="10" effort="10" />
+    </joint>
+    <joint name="rj2" type="revolute">
+        <origin xyz="-0.0345870699184 -0.0799863449379 -0.0310961998269" rpy="1.57079605244 -0.00357221325976 1.8474162273" />
+        <axis xyz="0 0 1" />
+        <parent link="shoulder_knuckle__shoulder_knuckle" />
+        <child link="bicep__bicep" />
+        <limit lower="-2.094395" upper="2.094395" velocity="10" effort="10" />
+    </joint>
+    <joint name="rj2_fastened_joint" type="fixed">
+        <origin xyz="-1.08044238915 -0.390199904715 0.0283732162424" rpy="1.62259962837 -1.31221410986 -1.36262971785" />
+        <axis xyz="-0 -0 -1" />
+        <parent link="bicep__bicep" />
+        <child link="bicep_cover__bicep_cover" />
+    </joint>
+    <joint name="rj3" type="revolute">
+        <origin xyz="-0.140145871978 -0.0763872880607 0.0558851310302" rpy="0.0407503614628 -1.308774278 -1.34835179448" />
+        <axis xyz="0 0 1" />
+        <parent link="bicep__bicep" />
+        <child link="forearm__forearm" />
+        <limit lower="-2.094395" upper="2.094395" velocity="10" effort="10" />
+    </joint>
+    <joint name="rj3_fastened_joint" type="fixed">
+        <origin xyz="-0.000283681312204 -0.986812299969 -0.0688189770928" rpy="1.57498814512 -0.00351664735729 -0.00353141945616" />
+        <axis xyz="-0 -0 -1" />
+        <parent link="forearm__forearm" />
+        <child link="forearm_cover__forearm_cover" />
+    </joint>
+    <joint name="rj4" type="revolute">
+        <origin xyz="-0.026394022686 -0.124869857938 0.0320705424258" rpy="1.5706721164 0.813394470638 3.09537483234" />
+        <axis xyz="0 0 1" />
+        <parent link="forearm__forearm" />
+        <child link="forearm_rotation__forearm_rotation" />
+        <limit lower="-2.094395" upper="2.094395" velocity="10" effort="10" />
+    </joint>
+    <joint name="rj5" type="revolute">
+        <origin xyz="-0.0131274174791 -0.0148749771559 -0.0327430850179" rpy="1.57079632679 -1.37217251185 -0.711560036946" />
+        <axis xyz="0 0 1" />
+        <parent link="forearm_rotation__forearm_rotation" />
+        <child link="wrist_knuckle__wrist_knuckle" />
+        <limit lower="-2.094395" upper="2.094395" velocity="10" effort="10" />
+    </joint>
+    <joint name="rj6" type="revolute">
+        <origin xyz="-0.048011063802 0.0111601874515 -0.0199285718201" rpy="1.57079633063 -1.39895819397 -2.95327586221" />
+        <axis xyz="0 0 1" />
+        <parent link="wrist_knuckle__wrist_knuckle" />
+        <child link="hand__hand" />
+        <limit lower="-2.094395" upper="2.094395" velocity="10" effort="10" />
+    </joint>
+    <joint name="rj6_fastened_joint" type="fixed">
+        <origin xyz="0 2.22045e-16 6.93889e-18" rpy="-2.11758e-22 -1.69407e-21 -2.20722e-23" />
+        <axis xyz="-0 -0 -1" />
+        <parent link="wrist_cam__wrist_cam" />
+        <child link="hand_motor_mount__hand_motor_mount" />
+    </joint>
+    <joint name="rj6_fastened_joint_1" type="fixed">
+        <origin xyz="0.158112192231 -0.771278690689 -0.0790064591971" rpy="1.51922578538 0.199948606146 0.189956115004" />
+        <axis xyz="-0 -0 -1" />
+        <parent link="hand__hand" />
+        <child link="wrist_cam__wrist_cam" />
+    </joint>
+    <joint name="rj0" type="prismatic">
+        <origin xyz="7.84414955213e-09 -0.0274999999999 1.4057287444693842" rpy="9.79317772029e-12 3.67320510279e-06 2.85246774297e-07" />
+        <axis xyz="0 0 1" />
+        <parent link="arm_base" />
+        <child link="shoulder__shoulder" />
+        <limit lower="-1.03044" upper="0" velocity="10" effort="10" />
+    </joint>
+    <joint name="lj0" type="prismatic">
+        <origin xyz="-7.84414955213e-09 0.0274999999999 1.4057288904093843" rpy="5.307169793090001e-06 3.67320510276e-06 2.85256322693e-07" />
+        <axis xyz="0 0 1" />
+        <parent link="arm_base" />
+        <child link="l_shoulder__shoulder" />
+        <limit lower="-1.03044" upper="0" velocity="10" effort="10" />
+    </joint>
+    <joint name="lj0_fastened_joint" type="fixed">
+        <origin xyz="0.0112151 -0.0286011 -1.35824" rpy="-3.14159265359 1.46937e-39 2.81907e-23" />
+        <axis xyz="0 0 -1" />
+        <parent link="l_shoulder__shoulder" />
+        <child link="l_shoulder_cover__shoulder_cover" />
+    </joint>
+    <joint name="lj1" type="revolute">
+        <origin xyz="-0.00793876834457 0.0857475264263 -0.144638109056" rpy="1.84139366177 -0.252680843025 0.192562310965" />
+        <axis xyz="0 0 1" />
+        <parent link="l_shoulder__shoulder" />
+        <child link="l_shoulder_knuckle__shoulder_knuckle" />
+        <limit lower="-2.094395" upper="2.094395" velocity="10" effort="10" />
+    </joint>
+    <joint name="lj2" type="revolute">
+        <origin xyz="-0.0699464453572 -0.0519766828872 0.0310961998269" rpy="1.57079660115 0.00357221325976 1.32381761146" />
+        <axis xyz="0 0 1" />
+        <parent link="l_shoulder_knuckle__shoulder_knuckle" />
+        <child link="l_bicep__bicep" />
+        <limit lower="-2.094395" upper="2.094395" velocity="10" effort="10" />
+    </joint>
+    <joint name="lj2_fastened_joint" type="fixed">
+        <origin xyz="-1.08044238915 0.390199904715 0.0283732162424" rpy="-1.62259962837 -1.31221410986 1.36262971785" />
+        <axis xyz="0 0 -1" />
+        <parent link="l_bicep__bicep" />
+        <child link="l_bicep_cover__bicep_cover" />
+    </joint>
+    <joint name="lj3" type="revolute">
+        <origin xyz="-0.140145871978 0.0763872880607 0.0558851310302" rpy="3.07467374061 -1.30839578872 1.37544635341" />
+        <axis xyz="0 0 1" />
+        <parent link="l_bicep__bicep" />
+        <child link="l_forearm__forearm" />
+        <limit lower="-2.094395" upper="2.094395" velocity="10" effort="10" />
+    </joint>
+    <joint name="lj3_fastened_joint" type="fixed">
+        <origin xyz="0.00665687119234 -0.986789887418 0.0688189770928" rpy="1.56660450847 0.00351664735729 0.00350193705058" />
+        <axis xyz="0 0 -1" />
+        <parent link="l_forearm__forearm" />
+        <child link="l_forearm_cover__forearm_cover" />
+    </joint>
+    <joint name="lj4" type="revolute">
+        <origin xyz="-0.0255151228706 -0.125052406454 -0.0320705424258" rpy="1.57092053719 -0.813394470638 3.10240818885" />
+        <axis xyz="0 0 1" />
+        <parent link="l_forearm__forearm" />
+        <child link="l_forearm_rotation__forearm_rotation" />
+        <limit lower="-2.094395" upper="2.094395" velocity="10" effort="10" />
+    </joint>
+    <joint name="lj5" type="revolute">
+        <origin xyz="-0.0131274174791 0.0148749771559 -0.0327430850179" rpy="-1.57079632679 -1.37217251185 0.711560036946" />
+        <axis xyz="0 0 1" />
+        <parent link="l_forearm_rotation__forearm_rotation" />
+        <child link="l_wrist_knuckle__wrist_knuckle" />
+        <limit lower="-2.094395" upper="2.094395" velocity="10" effort="10" />
+    </joint>
+    <joint name="lj6" type="revolute">
+        <origin xyz="-0.048011063802 -0.0111601874515 -0.0199285718201" rpy="-1.5707963239 -1.34221899307 -0.188316797975" />
+        <axis xyz="0 0 1" />
+        <parent link="l_wrist_knuckle__wrist_knuckle" />
+        <child link="l_hand__hand" />
+        <limit lower="-2.094395" upper="2.094395" velocity="10" effort="10" />
+    </joint>
+    <joint name="left_left_gripper" type="revolute">
+        <origin xyz="0.0204743030349 -0.0575833745389 0.037214733194" rpy="1.57079640885 -0.151326128328 -1.73758575959" />
+        <axis xyz="0 0 1" />
+        <parent link="l_hand__hand" />
+        <child link="l_left_finger__left_finger" />
+        <limit lower="0" upper="1" effort="10" velocity="2" />
+    </joint>
+    <joint name="left_right_gripper" type="revolute">
+        <origin xyz="0.0204743340909 -0.0575833871964 0.00313574940202" rpy="1.5707962438 -0.252466986075 1.40400691098" />
+        <axis xyz="0 0 1" />
+        <parent link="l_hand__hand" />
+        <child link="l_right_finger__right_finger" />
+        <limit lower="0" upper="1" effort="10" velocity="2" />
+        <mimic joint="left_left_gripper" multiplier="1" offset="0" />
+    </joint>
+    <joint name="lj6_fastened_joint_1" type="fixed">
+        <origin xyz="-0.155039809149 -0.771902158063 0.0790064591971" rpy="1.62236686821 -0.199948606146 -0.210459351552" />
+        <axis xyz="0 0 -1" />
+        <parent link="l_hand__hand" />
+        <child link="l_wrist_cam__wrist_cam" />
+    </joint>
+    <joint name="lj6_fastened_joint" type="fixed">
+        <origin xyz="0 -2.22045e-16 6.93889e-18" rpy="2.11758e-22 -1.69407e-21 2.20722e-23" />
+        <axis xyz="0 0 -1" />
+        <parent link="l_wrist_cam__wrist_cam" />
+        <child link="l_hand_motor_mount__hand_motor_mount" />
+    </joint>
+    <joint name="arm_base_frame" type="fixed">
+        <origin xyz="-0.01134221138701112 0.04723714002888056 -5.318379244635435e-07" rpy="1.5707986828490839 1.7882110546301158e-07 5.0519484442461774e-05" />
+        <parent link="main_extrusion__main_extrusion__main_extrusion__main_extrusion" />
+        <child link="arm_base" />
+        <axis xyz="0 0 0" />
+    </joint>
+    <joint name="right_eef_frame" type="fixed">
+        <origin xyz="0.0337039299018 -0.14163013575 -0.020175238896" rpy="1.57079632679 -1.83250549097e-13 0.233626038074" />
+        <parent link="hand__hand" />
+        <child link="right_eef" />
+        <axis xyz="0 0 0" />
+    </joint>
+    <joint name="left_eef_frame" type="fixed">
+        <origin xyz="-0.0241696460033 -0.143564892837 0.020175238896" rpy="1.57079632679 1.83239434848e-13 -0.166789428481" />
+        <parent link="l_hand__hand" />
+        <child link="left_eef" />
+        <axis xyz="0 0 0" />
+    </joint>
+</robot>
