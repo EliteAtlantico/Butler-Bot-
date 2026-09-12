@@ -1,5 +1,11 @@
-<mujoco model="bracketbot vision-nav scene">
-  <include file="chopped_dynamic.xml"/>
+<mujoco model="bracketbot obstacle course">
+  <!-- Robot model lives in the sibling folder. Its own meshdir is relative to
+       this file once included, which would point at comp_vision_sim/meshes,
+       so it has to be redirected. The override MUST come after the include:
+       the last <compiler> parsed wins, and putting it first silently loses to
+       the included one. -->
+  <include file="../main_mujoco/chopped_dynamic.xml"/>
+  <compiler meshdir="../main_mujoco/meshes/"/>
 
   <statistic center="0 0 0.6" extent="2.0"/>
 
