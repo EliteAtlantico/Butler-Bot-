@@ -73,6 +73,9 @@ def parse_args(argv=None):
                         "a coloured target; needs no detector palette")
     p.add_argument("--camera", default=None,
                    help="camera to perceive through (default: auto-detected)")
+    p.add_argument("--animate-movers", type=float, default=0.0, metavar="MPS",
+                   help="shuttle every mocap body in the scene across the route "
+                        "at this speed, to exercise moving obstacles")
     p.add_argument("--weights", default=None,
                    help="YOLO weights (default: runs/bracketbot_yolo/weights/best.pt)")
     p.add_argument("--conf", type=float, default=0.35, help="YOLO confidence")
@@ -333,6 +336,24 @@ def main():
     wall = time.time()
     frame_no, next_frame = 0, 0.0
 
+    # Mocap bodies are kinematic: nothing in the physics moves them, so if the
+    # scene has any and the caller asked for motion, we drive them ourselves.
+    movers = [b for b in range(bot.model.nbody) if bot.model.body_mocapid[b] >= 0]
+    home = {b: bot.model.body_pos[b].copy() for b in movers}
+    if movers and args.animate_movers > 0:
+        print(f"animating {len(movers)} mocap body(s) at "
+              f"{args.animate_movers:.1f} m/s")
+
+    def drive_movers(amplitude=3.0):
+        if not movers or args.animate_movers <= 0:
+            return
+        phase = (bot.time * args.animate_movers / (2 * amplitude)) % 2.0
+        offset = -amplitude + 2 * amplitude * (phase if phase < 1 else 2 - phase)
+        for b in movers:
+            p = home[b].copy()
+            p[1] = offset
+            bot.data.mocap_pos[bot.model.body_mocapid[b]] = p
+
     def tick():
         nonlocal frame_no, next_frame
         track.append(bot.position[:2].copy())
@@ -351,6 +372,7 @@ def main():
             # of success gives you nothing to look at.
             while viewer.is_running() and bot.time < args.duration \
                     and not bot.fallen:
+                drive_movers()
                 bot.step(0.05, controller=nav)
                 tick()
                 viewer.sync()
@@ -359,6 +381,7 @@ def main():
                     time.sleep(lag)
     else:
         while bot.time < args.duration and not bot.fallen and not nav.done:
+            drive_movers()
             bot.step(0.1, controller=nav)
             tick()
 

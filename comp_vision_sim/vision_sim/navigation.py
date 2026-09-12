@@ -76,6 +76,10 @@ class VisualNavigator:
         # was not -- so existing callers keep their behaviour exactly.
         self.camera = scene.camera if scene else None
         self.floor_z = scene.floor_z if scene else 0.0
+        # Anything above the robot's head is not an obstacle it can hit. A
+        # doorway lintel or a low ceiling otherwise projects straight down
+        # into the 2-D grid and seals a gap the robot can drive through.
+        self.obstacle_ceiling = (scene.robot_top + 0.10) if scene else 2.0
         self.robot_radius = (robot_radius if robot_radius is not None
                              else (scene.robot_radius + 0.05 if scene else 0.30))
         self.self_radius = (scene.robot_radius + 0.25) if scene else 0.55
@@ -181,7 +185,8 @@ class VisualNavigator:
     def _integrate(self, obs):
         """Fold one RGB-D frame into the occupancy grid."""
         hits = perception.obstacle_points(obs, self_radius=self.self_radius,
-                                          floor_z=self.floor_z)
+                                          floor_z=self.floor_z,
+                                          max_height=self.obstacle_ceiling)
         free = perception.floor_points(obs, floor_z=self.floor_z)
         self.grid.integrate(obs.cam_pos[:2], hits, free)
 

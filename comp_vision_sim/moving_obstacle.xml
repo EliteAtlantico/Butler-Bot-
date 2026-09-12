@@ -1,0 +1,44 @@
+<mujoco model="moving obstacle test">
+  <!-- A crosser that walks back and forth across the robot's route, driven
+       kinematically from the run script via data.mocap_pos.
+
+       Mocap is deliberate: a body with a real joint would read as articulated,
+       and the scene introspection separates robot from scenery by exactly that
+       test (body_weldid). A mocap body stays welded to the world, so it is
+       classified as scenery while still being movable and still colliding. -->
+  <include file="../main_mujoco/chopped_dynamic.xml"/>
+  <compiler meshdir="../main_mujoco/meshes/"/>
+
+  <statistic center="4 0 0.6" extent="4.0"/>
+
+  <visual>
+    <headlight diffuse="0.55 0.55 0.55" ambient="0.35 0.35 0.35" specular="0.1 0.1 0.1"/>
+    <rgba haze="0.15 0.25 0.35 1"/>
+    <global azimuth="140" elevation="-20" offwidth="1280" offheight="960"/>
+    <map znear="0.01" zfar="40"/>
+  </visual>
+
+  <asset>
+    <texture type="skybox" builtin="gradient" rgb1="0.3 0.5 0.7" rgb2="0 0 0" width="512" height="3072"/>
+    <texture type="2d" name="groundplane" builtin="checker" mark="edge" rgb1="0.2 0.3 0.4" rgb2="0.1 0.2 0.3"
+             markrgb="0.8 0.8 0.8" width="300" height="300"/>
+    <material name="groundplane" texture="groundplane" texuniform="true" texrepeat="8 8" reflectance="0.1"/>
+    <material name="mover" rgba="0.90 0.35 0.10 1"/>
+    <material name="post" rgba="0.25 0.50 0.85 1"/>
+  </asset>
+
+  <worldbody>
+    <light pos="4 0 4" dir="0 0 -1" directional="true" diffuse="0.55 0.55 0.55"/>
+    <geom name="floor" size="0 0 0.05" type="plane" material="groundplane"
+          friction="1.6 0.01 0.001" condim="4"/>
+
+    <!-- the crosser: 1.2 m tall so the head camera sees it clearly -->
+    <body name="crosser" mocap="true" pos="4.0 -3.0 0.6">
+      <geom name="crosser_geom" type="box" size="0.22 0.22 0.6" material="mover"/>
+    </body>
+
+    <!-- static context so the map has something stable to anchor on -->
+    <body name="post_l" pos="2.2 2.6 0.5"><geom type="cylinder" size="0.16 0.5" material="post"/></body>
+    <body name="post_r" pos="6.2 -2.8 0.5"><geom type="cylinder" size="0.16 0.5" material="post"/></body>
+  </worldbody>
+</mujoco>
