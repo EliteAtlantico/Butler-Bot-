@@ -26,8 +26,8 @@ def _wrap(a):
 class VisualNavigator:
     """Search -> detect -> map -> plan -> follow, driven by the RGB-D camera."""
 
-    SURVEY, SCAN, NAVIGATE, ARRIVED, STUCK = ("survey", "scan", "navigate",
-                                             "arrived", "stuck")
+    SURVEY, SCAN, EXPLORE, NAVIGATE, ARRIVED, STUCK = (
+        "survey", "scan", "explore", "navigate", "arrived", "stuck")
 
     @classmethod
     def for_bot(cls, bot, goal=None, camera: str | None = None, **kw):
@@ -60,6 +60,8 @@ class VisualNavigator:
                  research_cooldown: float = 3.0, sighting_range: float = 7.0,
                  presence_radius: float = 0.45, presence_min_points: int = 20,
                  goal_probe_height: float = 0.6, research_scan_turns: int = 2,
+                 explorer=None, explore_waypoint_tol: float = 0.45,
+                 max_explore_steps: int = 8,
                  detector=None, verbose: bool = False):
         # `detector(obs, robot_yaw=...) -> list[Detection]`. Defaults to the
         # colour detector; a YoloDetector satisfies the same contract, so
@@ -138,7 +140,23 @@ class VisualNavigator:
         self._miss_since: float | None = None
         self._search_done_at: float | None = None
 
-        self.state = (self.SURVEY if (survey is not None and self.fixed_goal is None)
+        # LLM-guided exploration (vision_sim.llm_explore.LlmExplorer): survey,
+        # let the fast detector look at every photo, and when it sees nothing
+        # ask the model where to go next; drive there and survey again.
+        self.explorer = explorer
+        self.explore_waypoint_tol = explore_waypoint_tol
+        self.max_explore_steps = max_explore_steps
+        self.explored: list[np.ndarray] = []
+        self.explore_target: np.ndarray | None = None
+        self.explore_result = None
+        self.explore_steps = 0
+        self._explore_plan_failures = 0
+        if explorer is not None:
+            explorer.floor_z = self.floor_z
+            explorer.ceiling = getattr(self, "obstacle_ceiling", explorer.ceiling)
+
+        searching = survey is not None or explorer is not None
+        self.state = (self.SURVEY if (searching and self.fixed_goal is None)
                       else self.SCAN)
         self.detections: list[perception.Detection] = []
         self.goal_xy: np.ndarray | None = None
@@ -234,14 +252,37 @@ class VisualNavigator:
     def replan(self, bot):
         if self.goal_xy is None:
             return False
+        ok = self._plan_to(bot, self.goal_xy, self.stop_distance)
+        if ok is None:
+            return False
+        if not ok:
+            self._plan_failures += 1
+            if self._plan_failures >= 8:
+                if self.fixed_goal is None:
+                    # No route to where we think the goal is: the estimate may
+                    # be wrong, so look again before giving up.
+                    self._research(bot, self._last_t or 0.0, "no route to the goal")
+                else:
+                    self.state = self.STUCK
+            return False
+        self._plan_failures = 0
+        return True
+
+    def _plan_to(self, bot, target_xy, stop_distance):
+        """A* from the robot to `stop_distance` short of a target.
+
+        True on success (sets self.path), False when there is no route, None
+        when the robot is already on the target.
+        """
+        target_xy = np.asarray(target_xy, float)
         blocked, soft = self.grid.costmap(robot_radius=self.robot_radius)
-        # Stand off from the goal instead of driving into it.
+        # Stand off from the target instead of driving into it.
         here = bot.position[:2]
-        delta = self.goal_xy - here
+        delta = target_xy - here
         dist = float(np.linalg.norm(delta))
         if dist < 1e-6:
-            return False
-        stand_off = self.goal_xy - delta / dist * self.stop_distance
+            return None
+        stand_off = target_xy - delta / dist * stop_distance
 
         start = self.grid.to_cell(here)[0]
         goal = self.grid.to_cell(stand_off)[0]
@@ -254,16 +295,7 @@ class VisualNavigator:
 
         cells = planning.astar(blocked, start, goal, soft=soft)
         if cells is None:
-            self._plan_failures += 1
-            if self._plan_failures >= 8:
-                if self.fixed_goal is None:
-                    # No route to where we think the goal is: the estimate may
-                    # be wrong, so look again before giving up.
-                    self._research(bot, self._last_t or 0.0, "no route to the goal")
-                else:
-                    self.state = self.STUCK
             return False
-        self._plan_failures = 0
         cells = planning.shortcut(blocked, cells)
         self.path = [self.grid.to_world(c)[0] for c in cells[1:]] or [stand_off]
         self.blocked = blocked
@@ -308,7 +340,7 @@ class VisualNavigator:
         from .llm_survey import SurveyShot
 
         if self._survey_plan is None:
-            self._survey_plan = self.survey.headings(bot.yaw)
+            self._survey_plan = (self.explorer or self.survey).headings(bot.yaw)
             self._turn_since = t
             self._note(f"t={t:.1f}s survey: {len(self._survey_plan)} photos from "
                        f"({bot.position[0]:.2f}, {bot.position[1]:.2f})")
@@ -347,6 +379,9 @@ class VisualNavigator:
             return
 
         bot.drive(0.0, 0.0)
+        if self.explorer is not None:
+            self._finish_explore_survey(bot, t)
+            return
         self._note(f"t={t:.1f}s survey: asking the model about "
                    f"{len(self.survey_shots)} photos")
         self.survey_result = self.survey.query(self.survey_shots)
@@ -384,6 +419,125 @@ class VisualNavigator:
         self.replan(bot)
         self._next_plan = t + self.plan_period
         self.state = self.NAVIGATE
+
+    # ------------------------------------------------------------- explore
+    def _start_survey(self, t):
+        self.survey_shots = []
+        self.survey_result = None
+        self._survey_plan = None
+        self._survey_idx = 0
+        self._settle_since = None
+        self._turn_since = t
+        self.state = self.SURVEY
+
+    def _cheap_detector(self) -> bool:
+        """Fast enough to run on every survey photo (YOLO, colour, geometric).
+        An LLM detector is not: that would be one model query per photo."""
+        return not hasattr(self.detector, "client")
+
+    def _detect_in_shots(self, t):
+        """Run the detector on every survey photo; the goal estimate, or None."""
+        best = None
+        for shot in self.survey_shots:
+            dets = self.detector(shot.obs, robot_yaw=shot.heading, t=t)
+            if len(dets) >= len(self.best_detections):
+                self.best_obs, self.best_detections, self.best_time = shot.obs, list(dets), t
+            for d in dets:
+                if d.label == self.goal_label and (best is None or d.pixels > best[1].pixels):
+                    best = (shot, d)
+        if best is None:
+            return None
+        shot, d = best
+        ray = d.position[:2] - shot.obs.cam_pos[:2]
+        ray = ray / max(float(np.linalg.norm(ray)), 1e-6)
+        # Same nudge as sense(): the detector sees the near face.
+        return d.position[:2] + ray * 0.2, shot.index
+
+    def _finish_explore_survey(self, bot, t):
+        here = bot.position[:2].copy()
+        # 1. The fast detector looks at every photo first. If it already sees
+        #    the object, the model has nothing to add and is not asked.
+        if self._cheap_detector():
+            hit = self._detect_in_shots(t)
+            if hit is not None:
+                self.goal_xy, photo = hit
+                self._goal_provisional = False
+                self._note(f"t={t:.1f}s survey: detector found the goal in photo {photo} at "
+                           f"({self.goal_xy[0]:.2f}, {self.goal_xy[1]:.2f}); no model query needed")
+                self._go_to_goal(bot, t)
+                return
+        if self.explore_steps >= self.max_explore_steps:
+            self._note(f"t={t:.1f}s explored {self.explore_steps} place(s) without finding "
+                       "the goal; giving up")
+            self.state = self.STUCK
+            return
+        # 2. Nothing seen: ask the model where the goal is, or where to look next.
+        self._note(f"t={t:.1f}s survey: nothing found; asking the model where to look next")
+        res = self.explorer.query(self.survey_shots, visited=self.explored + [here])
+        self.explore_result = res
+        self.explore_steps += 1
+        self.explored.append(here)
+        if res.found and res.goal.detection is not None:
+            self._finish_survey(bot, t, res.goal)
+            return
+        if res.waypoint is None:
+            self._note(f"t={t:.1f}s explore: nowhere left to go "
+                       f"({'; '.join(res.notes) or res.error}); giving up")
+            self.state = self.STUCK
+            return
+        self.explore_target = self._clip_to_grid(res.waypoint)
+        self._explore_plan_failures = 0
+        self._note(f"t={t:.1f}s explore {self.explore_steps}: heading for "
+                   f"({self.explore_target[0]:.2f}, {self.explore_target[1]:.2f}) via "
+                   f"{res.waypoint_source}: {res.reason}")
+        self.path = []
+        self._plan_to(bot, self.explore_target, 0.0)
+        self._next_plan = t + self.plan_period
+        self.state = self.EXPLORE
+
+    def _go_to_goal(self, bot, t):
+        self.explore_target = None
+        self._search_done_at = t
+        self._miss_since = None
+        self.replan(bot)
+        self._next_plan = t + self.plan_period
+        self.state = self.NAVIGATE
+
+    def _explore_tick(self, bot, t):
+        # The detector runs every sense tick while exploring; the moment it
+        # puts a goal on the map, stop exploring and go to it.
+        if self.goal_xy is not None and not self._goal_provisional:
+            self._note(f"t={t:.1f}s goal spotted at ({self.goal_xy[0]:.2f}, "
+                       f"{self.goal_xy[1]:.2f}) while exploring; heading for it")
+            self._go_to_goal(bot, t)
+            bot.drive(0.0, 0.0)
+            return
+        here = bot.position[:2]
+        if np.linalg.norm(self.explore_target - here) < self.explore_waypoint_tol:
+            self._note(f"t={t:.1f}s reached waypoint ({self.explore_target[0]:.2f}, "
+                       f"{self.explore_target[1]:.2f}); surveying again")
+            self.explore_target = None
+            self._start_survey(t)
+            bot.drive(0.0, 0.0)
+            return
+        if t >= self._next_plan:
+            self._next_plan = t + self.plan_period
+            ok = self._plan_to(bot, self.explore_target, 0.0)
+            if ok is False:
+                self._explore_plan_failures += 1
+                if self._explore_plan_failures >= 5:
+                    self._note(f"t={t:.1f}s no route to waypoint ({self.explore_target[0]:.2f}, "
+                               f"{self.explore_target[1]:.2f}); surveying again from here")
+                    self.explored.append(np.asarray(self.explore_target, float))
+                    self.explore_target = None
+                    self._start_survey(t)
+                    bot.drive(0.0, 0.0)
+                    return
+            elif ok:
+                self._explore_plan_failures = 0
+        if self.path:
+            self._cmd = self._follow(bot)
+        bot.drive(*self._cmd)
 
     # ------------------------------------------------------- losing the goal
     def _update_tracking(self, t, sighted):
@@ -470,14 +624,9 @@ class VisualNavigator:
         forget = getattr(self.detector, "forget", None)
         if callable(forget):
             forget()
-        if self.survey is not None:
-            self.survey_shots = []
-            self.survey_result = None
-            self._survey_plan = None
-            self._survey_idx = 0
-            self._settle_since = None
-            self._turn_since = t
-            self.state = self.SURVEY
+        self.explore_target = None
+        if self.survey is not None or self.explorer is not None:
+            self._start_survey(t)
         else:
             self._scan_start, self._scan_yaw = None, 0.0
             self.state = self.SCAN
@@ -561,6 +710,10 @@ class VisualNavigator:
                                            "full turn(s)")
                     return
             bot.drive(0.0, self.scan_rate)
+            return
+
+        if self.state == self.EXPLORE:
+            self._explore_tick(bot, t)
             return
 
         if self.state == self.NAVIGATE:

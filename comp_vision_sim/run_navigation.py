@@ -7,6 +7,7 @@
     ./run_navigation.py --detector yolo    # use the net from train_yolo.py
     ./run_navigation.py --detector llm     # the local LLM reasons about the scene
     ./run_navigation.py --detector llm --survey   # 8 labelled photos, one LLM query, then drive
+    ./run_navigation.py --scene search_course.xml --explore   # YOLO searches; the LLM picks waypoints
 
 The robot spins once to map the room with its depth camera, finds the red
 column, then A*s a path around the barrier it can see and drives it --
@@ -61,7 +62,7 @@ def parse_args(argv=None):
                    help="also write rgbd_frame_XX.png every few seconds")
     p.add_argument("--seed-scan", type=float, default=1.0,
                    help="turns to spin while mapping before planning")
-    p.add_argument("--detector", default="colour",
+    p.add_argument("--detector", default=None,
                    choices=["colour", "yolo", "geometric", "llm"],
                    help="colour thresholding, a YOLO net trained by "
                         "train_yolo.py, 'geometric' -- colour-free clustering "
@@ -114,20 +115,36 @@ def parse_args(argv=None):
                         "view before searching for it again")
     p.add_argument("--max-researches", type=int, default=3,
                    help="how many times to re-run the search before giving up")
+    p.add_argument("--explore", action="store_true",
+                   help="search for the object: survey, let the detector (YOLO by "
+                        "default) check every photo, and if it sees nothing ask "
+                        "the local LLM where to go next; drive there and repeat "
+                        "until the detector finds the object, then go to it. "
+                        "Takes precedence over --survey")
+    p.add_argument("--max-explore-steps", type=int, default=8,
+                   help="places to explore before giving up")
+    p.add_argument("--explore-step", type=float, default=3.5,
+                   help="farthest a single exploration waypoint may be (m)")
     return p.parse_args(argv)
 
 
+def resolve_detector(args) -> str:
+    """--explore searches with the trained YOLO net unless told otherwise."""
+    return args.detector or ("yolo" if getattr(args, "explore", False) else "colour")
+
+
 def build_detector(args, info=None):
-    if args.detector == "colour":
+    name = resolve_detector(args)
+    if name == "colour":
         return None
-    if args.detector == "geometric":
+    if name == "geometric":
         from vision_sim.perception import GeometricDetector
         det = GeometricDetector(
             floor_z=info.floor_z if info else 0.0,
             self_radius=(info.robot_radius + 0.25) if info else 0.55)
         print("detector: geometric (colour-free clustering)")
         return det
-    if args.detector == "yolo":
+    if name == "yolo":
         from vision_sim.yolo_detector import YoloDetector
         # A fresh training run wins over the checked-in net, so retraining takes
         # effect without passing --weights; models/ is the fallback that makes a
@@ -153,7 +170,21 @@ def resolve_track(args) -> str:
     """How a found goal is confirmed. A survey already ranged the goal with the
     LLM, so confirming it from depth alone avoids a model query every few
     seconds; without a survey the detector is the only thing that finds it."""
-    return args.track or ("depth" if args.survey else "detector")
+    return args.track or ("depth" if (args.survey or getattr(args, "explore", False))
+                          else "detector")
+
+
+def build_explorer(args):
+    if not getattr(args, "explore", False):
+        return None
+    from vision_sim.llm_explore import LlmExplorer
+    explorer = LlmExplorer(base_url=args.llm_url, model=args.llm_model,
+                           n_shots=args.survey_shots, min_confidence=args.survey_conf,
+                           max_tokens=args.survey_max_tokens, thinking=args.llm_thinking,
+                           max_step=args.explore_step, verbose=True)
+    print(f"explore: {args.survey_shots}-photo surveys; the LLM picks waypoints, "
+          f"at most {args.max_explore_steps}")
+    return explorer
 
 
 def build_survey(args):
@@ -348,6 +379,8 @@ def main():
                                   scan_turns=args.seed_scan, verbose=True,
                                   detector=build_detector(args, info),
                                   survey=build_survey(args),
+                                  explorer=build_explorer(args),
+                                  max_explore_steps=args.max_explore_steps,
                                   track=resolve_track(args),
                                   lost_after=args.lost_after,
                                   max_researches=args.max_researches)
@@ -439,6 +472,10 @@ def main():
             print(f"  answer: not found ({r.error or r.reason})")
     if getattr(nav, "researches", 0):
         print(f"re-searched {nav.researches} time(s) after losing the goal")
+    if getattr(nav, "explorer", None) is not None:
+        places = ", ".join(f"({p[0]:.1f}, {p[1]:.1f})" for p in nav.explored) or "none"
+        print(f"explore: {nav.explore_steps} LLM waypoint query(ies); surveyed from {places}; "
+              f"{nav.explorer!r}")
 
     if nav.obs is not None:
         figure(bot, nav, track, args.out, elapsed, truth=truth)
