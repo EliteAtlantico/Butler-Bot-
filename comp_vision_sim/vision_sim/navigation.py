@@ -38,6 +38,10 @@ class VisualNavigator:
         and no colour palette -- or a class label to look for.
         """
         info = SceneInfo.from_model(bot.model, bot.data, camera=camera)
+        if goal is not None and not isinstance(goal, str):
+            # The grid is sized to the scenery, which says nothing about where
+            # you want to go. A goal beyond it can never be planned to.
+            info = info.including(goal)
         return cls(scene=info, goal=goal, **kw)
 
     def __init__(self, goal=None, scene: SceneInfo | None = None,
@@ -115,6 +119,7 @@ class VisualNavigator:
         self._wp = 0
         self._cmd = (0.0, 0.0)
         self._plan_failures = 0
+        self._off_grid_warned = False
 
     @property
     def done(self):
@@ -166,6 +171,23 @@ class VisualNavigator:
 
         start = self.grid.to_cell(here)[0]
         goal = self.grid.to_cell(stand_off)[0]
+        # Off-grid start or goal fails inside A* with no explanation and looks
+        # exactly like "no route exists". Say which it is.
+        for label, cell in (("goal", goal), ("robot", start)):
+            if not self.grid.inside(cell)[0]:
+                if not self._off_grid_warned:
+                    self._off_grid_warned = True
+                    x0, y0 = self.grid.origin
+                    x1 = x0 + self.grid.size[0] * self.grid.resolution
+                    y1 = y0 + self.grid.size[1] * self.grid.resolution
+                    self._note(f"{label} is outside the map "
+                               f"(x {x0:.1f}..{x1:.1f}, y {y0:.1f}..{y1:.1f}) "
+                               f"-- no plan is possible; widen the grid")
+                self._plan_failures += 1
+                if self._plan_failures >= 8:
+                    self.state = self.STUCK
+                return False
+
         if blocked[tuple(start)]:
             # The robot is inside its own inflation (hugging a wall). Free the
             # cells it physically occupies, or no plan can ever start.
