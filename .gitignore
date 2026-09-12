@@ -11,6 +11,8 @@ MUJOCO_LOG.TXT
 yolo_dataset/
 runs/
 yolov8n.pt
+# base weights auto-downloaded into the repo root by ultralytics
+/weights/
 
 # Run outputs
 vision_nav.png
