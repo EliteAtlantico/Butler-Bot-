@@ -61,7 +61,7 @@ class VisualNavigator:
                  presence_radius: float = 0.45, presence_min_points: int = 20,
                  goal_probe_height: float = 0.6, research_scan_turns: int = 2,
                  explorer=None, explore_waypoint_tol: float = 0.45,
-                 max_explore_steps: int = 8,
+                 max_explore_steps: int = 8, on_give_up=None,
                  detector=None, verbose: bool = False):
         # `detector(obs, robot_yaw=...) -> list[Detection]`. Defaults to the
         # colour detector; a YoloDetector satisfies the same contract, so
@@ -151,6 +151,10 @@ class VisualNavigator:
         self.explore_result = None
         self.explore_steps = 0
         self._explore_plan_failures = 0
+        # Called once, as on_give_up(navigator, reason), when the search ends
+        # without the goal -- where a remote-control hand-off plugs in.
+        self.on_give_up = on_give_up
+        self.give_up_reason: str | None = None
         if explorer is not None:
             explorer.floor_z = self.floor_z
             explorer.ceiling = getattr(self, "obstacle_ceiling", explorer.ceiling)
@@ -467,9 +471,7 @@ class VisualNavigator:
                 self._go_to_goal(bot, t)
                 return
         if self.explore_steps >= self.max_explore_steps:
-            self._note(f"t={t:.1f}s explored {self.explore_steps} place(s) without finding "
-                       "the goal; giving up")
-            self.state = self.STUCK
+            self._give_up(bot, t, f"explored {self.explore_steps} place(s) without finding the goal")
             return
         # 2. Nothing seen: ask the model where the goal is, or where to look next.
         self._note(f"t={t:.1f}s survey: nothing found; asking the model where to look next")
@@ -481,9 +483,7 @@ class VisualNavigator:
             self._finish_survey(bot, t, res.goal)
             return
         if res.waypoint is None:
-            self._note(f"t={t:.1f}s explore: nowhere left to go "
-                       f"({'; '.join(res.notes) or res.error}); giving up")
-            self.state = self.STUCK
+            self._give_up(bot, t, f"explore: nowhere left to go ({'; '.join(res.notes) or res.error})")
             return
         self.explore_target = self._clip_to_grid(res.waypoint)
         self._explore_plan_failures = 0
@@ -606,10 +606,7 @@ class VisualNavigator:
         """Forget the goal and run the search again from where the robot is."""
         self._miss_since = None
         if self.researches >= self.max_researches:
-            self._note(f"t={t:.1f}s {why}; already re-searched {self.researches} "
-                       "time(s), giving up")
-            self.state = self.STUCK
-            bot.drive(0.0, 0.0)
+            self._give_up(bot, t, f"{why}; already re-searched {self.researches} time(s)")
             return
         self.researches += 1
         self._note(f"t={t:.1f}s {why}; re-running the search "
@@ -631,6 +628,21 @@ class VisualNavigator:
             self._scan_start, self._scan_yaw = None, 0.0
             self.state = self.SCAN
         bot.drive(0.0, 0.0)
+
+    def _give_up(self, bot, t, reason):
+        """End the search without the goal, and tell whoever is listening."""
+        self._note(f"t={t:.1f}s {reason}; giving up")
+        self.state = self.STUCK
+        bot.drive(0.0, 0.0)
+        if self.give_up_reason is None:
+            self.give_up_reason = reason
+            if callable(self.on_give_up):
+                self.on_give_up(self, reason)
+
+    @property
+    def outcome(self) -> str | None:
+        """'found' once arrived, 'gave_up' once the search ended without the goal."""
+        return {self.ARRIVED: "found", self.STUCK: "gave_up"}.get(self.state)
 
     def _clip_to_grid(self, xy):
         """Keep a guessed goal inside the map, or planning cannot address it."""

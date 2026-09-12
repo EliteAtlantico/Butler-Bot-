@@ -13,11 +13,17 @@ robot drives there, looks again, and once YOLO finds the object it navigates to
 it and stops at the stand-off distance, ready for a pick (the manipulation
 branch is not merged yet). If the goal is lost or moves, it searches again.
 
+Or just say it: `--command "find me a key"`. The LLM works out the object and
+where it is usually kept, the robot searches those places first, and after a
+few rounds without it the search gives up and hands over (remote control; that
+branch is not merged, so it just stops).
+
 **Status: working end to end, tested, verified live.**
 
 | Run (live model) | Wall time | LLM queries | Result |
 |---|---|---|---|
 | **`--scene search_course.xml --explore`** (target hidden behind a wall) | **20.0–23.9 s** | 2–3 waypoints, 0 for the goal | pretrained YOLO-World found it at (6.49, −2.52) vs (6.5, −2.5); arrived 1.08–1.11 m away |
+| **`--scene home_search.xml --command "find me a key"`** (keys on the living-room sideboard, out of sight) | **46.6–52.0 s** | 1 command + 5–6 rounds | the LLM saw the keys at (9.34, −3.19) vs (9.35, −3.18); arrived 1.09 m away |
 | `--scene apartment.xml --explore --target "floor lamp"` | **3.7 s** | 0 (YOLO saw it in the first survey) | found at (10.27, 3.26) vs (10.1, 3.2); arrived 1.12 m away |
 | `--detector llm --survey` | **8.7 s** (was 90.7 s) | 1 survey (6.1 s) | arrived 1.12 m from the column |
 | `--detector llm` | **13.9 s** (was 100.7 s) | 8 frames, mean 1.5 s | arrived 1.15 m |
@@ -29,9 +35,10 @@ branch is not merged yet). If the goal is lost or moves, it searches again.
 cd comp_vision_sim
 ../.venv/bin/python -u run_navigation.py --scene search_course.xml --explore -d 240   # YOLO search, LLM waypoints
 ../.venv/bin/python -u run_navigation.py --scene apartment.xml --explore --target "floor lamp" -d 240   # any object by name
+../.venv/bin/python -u run_navigation.py --scene home_search.xml --command "find me a key" -d 600   # say it
 ../.venv/bin/python -u run_navigation.py --detector llm --survey -d 120    # survey, then drive
 ../.venv/bin/python -u run_navigation.py --detector llm -d 90             # per-frame only
-../.venv/bin/python -m unittest -v test_llm_scene_reasoning test_llm_survey test_goal_recovery test_explore test_pretrained_yolo
+../.venv/bin/python -m unittest -v test_llm_scene_reasoning test_llm_survey test_goal_recovery test_explore test_pretrained_yolo test_command_search
 ```
 
 venv = `/home/kc/Projects/Team-14-Battle-of-The-Schools/.venv` (Python 3.14,
@@ -43,6 +50,50 @@ The LLM server: `http://localhost:8080` (llama-server, `Qwen/Qwen3.8-27B`
 GGUF Q4_K_M + mmproj, multimodal, 131k ctx, 4 slots, `--image-min-tokens
 1024`) on the RTX 5090. It is already running — do NOT restart it; the user
 controls its lifecycle.
+
+## Natural-language search (`--command`)
+
+`vision_sim/llm_command.py` + a task-aware explore prompt + a give-up hook.
+
+1. **Understand the request** (one text-only LLM query, ~1.2 s):
+   `CommandInterpreter().parse("find me a key")` returns a `SearchTask`: the
+   target `keys` (for YOLO), the description `a set of keys` (for prompts), and
+   likely places ("entryway table, kitchen counter, dining table, hallway shelf,
+   coat pocket"), plus a reply the robot prints. A request that is not a search
+   ("what's the weather") gets target null and the sim does not start. If the
+   server is down, a word-stripping fallback still extracts the object
+   ("where did I leave my phone" → `phone`), with no place hints.
+2. **Search the likely places:** the normal `--explore` loop, with the task
+   in the prompt: the request, the likely places, "check the top of every table,
+   counter, shelf and seat", and the earlier choices, so it does not re-pick a
+   place already checked. The model boxes the most likely unchecked place in
+   view (or a doorway if none is visible) and the robot drives up to it.
+3. **Find it:** YOLO runs on every frame and every survey photo, and at every
+   stop the LLM checks all 8 survey photos for the object. Either one finding
+   it switches to navigating to it (ARRIVED, `nav.outcome == "found"`).
+4. **Give up after a few rounds** (6 with `--command`; `--max-explore-steps`):
+   state STUCK, `nav.outcome == "gave_up"`, and
+   `on_give_up(nav, reason)` is called exactly once. `run_navigation.py` wires it to
+   `hand_off_to_remote_control()`, which only prints for now — the place to
+   start `dev-remote-control` once it is merged. The same hook fires when the
+   re-search cap is hit.
+
+Why the LLM has to look too: the pretrained YOLO cannot see keys on these
+renders (best confidence 0.17 at 640 px, 0.09 on zoomed tiles, across "keys",
+"key", "keychain", "set of keys"). The vision LLM boxed them in every photo
+from 1.2 to 3 m (confidence 0.85–0.95, ~1.6 s), and reported nothing on the
+empty dining and coffee tables. `--command` with no text asks for the
+request on stdin.
+
+Live, `find me a key`: entryway table in the next room → coffee table through
+the doorway → two fallback waypoints across the living room → keys seen on the
+sideboard, ranged 0.2 m off, arrived 1.09 m away. 46.6 s wall, 105 s sim.
+A second live run (the test) took 6 rounds, 52.0 s wall, arrived 0.86 m away.
+Six rounds is the `--command` default and this flat can need all of them;
+raise `--max-explore-steps` for bigger spaces.
+
+`home_search.xml` is `apartment.xml` plus real-size keys (a ring, two keys, a
+leather fob) on the living-room sideboard, invisible from the start.
 
 ## Pretrained YOLO (replaces the net trained on this simulator)
 
@@ -260,6 +311,7 @@ Flags: `--llm-url`, `--llm-model`, `--llm-period` (3.0 sim s), `--llm-conf`
 | `test_llm_scene_reasoning.py` | 53 | JSON parsing, coercion, cadence, request payload, `bbox_2d` maths, pixel → world at 4 poses, oracle-model run to ARRIVED, colour/YOLO still work, CLI, 1 live |
 | `test_llm_survey.py` | 35 | plan, per-photo direction labels vs camera geometry, interpretation incl. boxes, request/error paths, navigator survey in place → ARRIVED, fallbacks, CLI, 1 live |
 | `test_goal_recovery.py` | 27 | thinking switch, `forget()`, visibility rules, cooldown/cap/no-route/reset, moved goal followed, moved goal re-surveyed with 0 frame queries, vanished goal → STUCK without arriving, normal runs never re-search, CLI, 2 live speed guards |
+| `test_command_search.py` | 26 | word-stripping fallback on 6 phrasings, model answers (places cleaned, capped, split; refusal; missing target), one text-only request with thinking off, server down / unparseable → still a task; prompt carries the request, places, surface hint and earlier choices (fallback waypoints marked as open floor); give-up hook fires once with the reason (nowhere to go, round cap), `outcome`; oracle keys search in `home_search.xml` found and reached with no YOLO false goal; CLI (`--command` implies explore, 6 rounds, sets the target, asks when empty, no sim for a non-search); 3 live (keys reasoning, refusal, full keys search) |
 | `test_pretrained_yolo.py` | 18 | weights by path or pretrained name, target → goal label, no duplicate target, trained 3-class net still loads, COCO-style unknown target rejected, GPU when present, CLIP encoder dropped, CUDA OOM → CPU (other errors still raised); red column found and ranged <0.4 m from 2.5/4/6 m, blue pillars never the goal, hidden column → no goal in all 8 photos, lamp as target found in the apartment; CLI `--target`/`--classes`, explore prompt names the target |
 | `test_explore.py` | 24 | open-floor distance, doorway pixel → doorway waypoint, no waypoints into near walls, fallback avoids explored places, explore/goal/unusable/explored answers, prompt lists explored places, server down or bad answer still yields a waypoint; hidden goal found via LLM waypoints + YOLO and reached, YOLO seeing the goal in a survey skips the model, waypoint reached → survey again, unreachable waypoint → survey again, step cap → STUCK, lost goal → explore again, CLI; 2 live (waypoint pick, full search) |
 
@@ -268,6 +320,8 @@ Offline everything passes; live tests skip themselves when the server is down
 pass): frame 1.7 s / 0.15 m; survey 6.0 s / 0.2° / 0.17 m; speed guards frame
 1.7 s and survey 6.0 s with no reasoning; explore waypoint 2.1 s, 0.99 m from
 the doorway; full live search 14.8 s wall, 2 LLM waypoints, arrived 1.08 m.
+Command search (live): parse 1.5 s, refusal of a non-search, full keys search
+52.0 s wall, 6 rounds, arrived 0.86 m.
 With the pretrained YOLO (offline 139 + 18 pass): explore waypoint 6.8 s,
 0.48 m from the doorway; full live search 23.9 s wall, 3 waypoints, arrived 1.08 m. `test_llm_reasoner.py` (original offline
 script, legacy pixel answers) also passes.
@@ -278,6 +332,8 @@ script, legacy pixel answers) also passes.
    `feature/manipulation` (picking) and `dev-remote-control` are not merged.
 2. **Picking the object up** is left for the manipulation branch; the robot
    stops at the stand-off distance (1.0 m) from the object.
+   **Remote control after a failed search** is `on_give_up` →
+   `hand_off_to_remote_control()` in `run_navigation.py`, a print for now.
 3. **The no-LLM fallback is not doorway-aware:** it picks the longest open run
    plus novelty, so without the model the search wanders the first room before
    finding the doorway. The LLM is what makes the search efficient.
@@ -301,11 +357,14 @@ script, legacy pixel answers) also passes.
 
 Line endings: `run_navigation.py` and `navigation.py` are CRLF;
 `perception.py`, `llm_reasoner.py`, `llm_survey.py`, `llm_explore.py`,
-`search_course.xml` and the tests are LF.
+`llm_command.py`, `yolo_detector.py`, `search_course.xml`, `home_search.xml`
+and the tests are LF.
 Keep each file's convention when editing.
 
 ## Key files
 
+- `comp_vision_sim/vision_sim/llm_command.py` — spoken request → SearchTask (object, likely places)
+- `comp_vision_sim/home_search.xml` — flat with keys hidden on the sideboard
 - `comp_vision_sim/vision_sim/yolo_detector.py` — pretrained open-vocabulary YOLO + depth ranging
 - `comp_vision_sim/vision_sim/llm_explore.py` — LLM waypoints for the search
 - `comp_vision_sim/search_course.xml` — hidden-target scene

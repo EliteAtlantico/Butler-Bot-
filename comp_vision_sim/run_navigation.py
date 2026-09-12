@@ -9,6 +9,7 @@
     ./run_navigation.py --detector llm     # the local LLM reasons about the scene
     ./run_navigation.py --detector llm --survey   # 8 labelled photos, one LLM query, then drive
     ./run_navigation.py --scene search_course.xml --explore   # YOLO searches; the LLM picks waypoints
+    ./run_navigation.py --scene home_search.xml --command "find me a key"   # say what to find
 
 The robot spins once to map the room with its depth camera, finds the red
 column, then A*s a path around the barrier it can see and drives it --
@@ -132,11 +133,19 @@ def parse_args(argv=None):
                         "the local LLM where to go next; drive there and repeat "
                         "until the detector finds the object, then go to it. "
                         "Takes precedence over --survey")
-    p.add_argument("--max-explore-steps", type=int, default=8,
-                   help="places to explore before giving up")
+    p.add_argument("--max-explore-steps", type=int, default=None,
+                   help="places to explore before giving up (default 8, or 6 with --command)")
+    p.add_argument("--command", nargs="?", const="", default=None, metavar="TEXT",
+                   help="say what to find in plain words, e.g. \"find me a key\" (no text: "
+                        "asks). The local LLM works out the object and where it is usually "
+                        "kept, then the robot searches those places with --explore, and hands "
+                        "over (remote control, not merged yet) if it cannot find it")
     p.add_argument("--explore-step", type=float, default=3.5,
                    help="farthest a single exploration waypoint may be (m)")
-    return p.parse_args(argv)
+    args = p.parse_args(argv)
+    if args.command is not None:
+        args.explore = True           # a spoken request is a search
+    return args
 
 
 def resolve_detector(args) -> str:
@@ -184,17 +193,50 @@ def resolve_track(args) -> str:
                           else "detector")
 
 
+def resolve_rounds(args) -> int:
+    """How many places to search: a few for a spoken request, then hand over."""
+    if args.max_explore_steps is not None:
+        return args.max_explore_steps
+    return 6 if args.command is not None else 8
+
+
+def build_command(args, ask=input):
+    """Parse --command into a SearchTask; it also sets --target unless given."""
+    if args.command is None:
+        return None
+    from vision_sim.llm_command import CommandInterpreter
+    text = args.command or ask("What should I find? ")
+    task = CommandInterpreter(base_url=args.llm_url, model=args.llm_model,
+                              thinking=args.llm_thinking, verbose=True).parse(text)
+    print(f"command: \"{task.command}\" -> {task.summary()}")
+    print(f"robot: {task.reply}")
+    if task.ok and args.target is None:
+        args.target = task.target
+    return task
+
+
+def hand_off_to_remote_control(nav, reason, task=None):
+    """Where the dev-remote-control branch takes over once it is merged."""
+    what = task.description if task is not None and task.ok else "the goal"
+    print(f"\nsearch over: could not find {what} ({reason}).")
+    print("hand-off: this is where remote control would take over so a person can "
+          "drive; dev-remote-control is not merged yet, so the robot stops here.")
+
+
 def build_explorer(args):
     if not getattr(args, "explore", False):
         return None
     from vision_sim.llm_explore import LlmExplorer
+    task = getattr(args, "task", None)
     explorer = LlmExplorer(base_url=args.llm_url, model=args.llm_model,
                            n_shots=args.survey_shots, min_confidence=args.survey_conf,
                            max_tokens=args.survey_max_tokens, thinking=args.llm_thinking,
                            max_step=args.explore_step, verbose=True,
-                           target=args.target or "a tall RED cylinder")
+                           target=(task.description if task is not None and task.ok
+                                   else args.target or "a tall RED cylinder"),
+                           task=task)
     print(f"explore: {args.survey_shots}-photo surveys; the LLM picks waypoints, "
-          f"at most {args.max_explore_steps}")
+          f"at most {resolve_rounds(args)}")
     return explorer
 
 
@@ -379,6 +421,13 @@ def main():
 
     from vision_sim.scene import SceneInfo
 
+    # A spoken request is understood before the sim starts: nothing to find
+    # means nothing to do.
+    args.task = build_command(args)
+    if args.task is not None and not args.task.ok:
+        print("nothing to search for; not starting")
+        return
+
     bot = BracketBot(xml=args.scene)
     bot.balance.enable(bot.state)
 
@@ -391,7 +440,9 @@ def main():
                                   detector=build_detector(args, info),
                                   survey=build_survey(args),
                                   explorer=build_explorer(args),
-                                  max_explore_steps=args.max_explore_steps,
+                                  max_explore_steps=resolve_rounds(args),
+                                  on_give_up=lambda nav, why: hand_off_to_remote_control(
+                                      nav, why, args.task),
                                   track=resolve_track(args),
                                   lost_after=args.lost_after,
                                   max_researches=args.max_researches)
@@ -487,6 +538,9 @@ def main():
         places = ", ".join(f"({p[0]:.1f}, {p[1]:.1f})" for p in nav.explored) or "none"
         print(f"explore: {nav.explore_steps} LLM waypoint query(ies); surveyed from {places}; "
               f"{nav.explorer!r}")
+
+    if args.task is not None:
+        print(f"command \"{args.task.command}\": {nav.outcome or nav.state}")
 
     if nav.obs is not None:
         figure(bot, nav, track, args.out, elapsed, truth=truth)

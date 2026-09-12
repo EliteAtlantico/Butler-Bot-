@@ -38,10 +38,9 @@ The robot stood still and turned in place, taking {n} photos. Each photo below i
 WORLD position (x, y in metres), the WORLD heading that photo faces, its angle from photo 0, and the world headings seen
 along its left and right edges. Headings are in degrees, 0 = +x axis, counter-clockwise positive. Every photo is
 {width} px wide and {height} px tall.
-{visited}
+{visited}{hints}
 First, look for {target} in every photo. If it is visible, report it.
-If it is not visible anywhere, choose WHERE TO GO NEXT to find it: the most promising patch of open floor to drive toward
--- a doorway, a gap between obstacles, the entrance to an unexplored area, or far open space. Prefer places the robot has
+If it is not visible anywhere, choose WHERE TO GO NEXT to find it: {where_next} Prefer places the robot has
 not explored. Do not choose walls, dead ends, or floor right next to the robot.
 
 Answer with ONLY a single-line compact JSON object -- no prose, no markdown fences. Keys, in this order:
@@ -156,7 +155,7 @@ class LlmExplorer:
                  verbose: bool = False, thinking: bool = False, max_step: float = 3.5,
                  min_step: float = 0.8, margin: float = 0.7, visit_radius: float = 1.0,
                  floor_z: float = 0.0, ceiling: float = 1.75,
-                 target: str = "a tall RED cylinder"):
+                 target: str = "a tall RED cylinder", task=None):
         # The survey supplies the plan, the per-photo labels, the client and the
         # goal ranging, so a goal the explorer reports is handled identically.
         self.survey = LlmSurvey(base_url, model, n_shots=n_shots, goal_label=goal_label,
@@ -166,6 +165,10 @@ class LlmExplorer:
         self.client = self.survey.client
         self.n_shots = n_shots
         self.target = target            # what to look for, as the prompt names it
+        # A vision_sim.llm_command.SearchTask: the user's request and where the
+        # object is usually found. With one, waypoints go to likely places first.
+        self.task = task
+        self.history: list[tuple[np.ndarray, str]] = []   # (waypoint, why) per model choice
         self.min_confidence = min_confidence
         self.verbose = verbose
         self.max_step, self.min_step, self.margin = max_step, min_step, margin
@@ -185,7 +188,31 @@ class LlmExplorer:
         else:
             visited_txt = "\nNothing has been explored yet.\n"
         return EXPLORE_PROMPT.format(n=len(shots), width=intr.width, height=intr.height,
-                                     visited=visited_txt, target=self.target)
+                                     visited=visited_txt, target=self.target,
+                                     hints=self._hints(), where_next=self._where_next())
+
+    def _hints(self) -> str:
+        task = self.task
+        if task is None:
+            return ""
+        lines = [f'The user asked: "{task.command}".']
+        if task.likely_places:
+            lines.append(f"Places where {task.description or task.target} is usually found, most likely first: "
+                         f"{', '.join(task.likely_places)}.")
+        lines.append("It may be small: check the top of every table, counter, shelf and seat in the photos.")
+        if self.history:
+            lines.append("Earlier choices (not found there): " + "; ".join(
+                f"({wp[0]:.1f}, {wp[1]:.1f}) {why}" for wp, why in self.history[-6:]))
+        lines.append('Start "reason" with the place you chose.')
+        return "\n".join(lines) + "\n"
+
+    def _where_next(self) -> str:
+        if self.task is None:
+            return ("the most promising patch of open floor to drive toward\n-- a doorway, a gap between "
+                    "obstacles, the entrance to an unexplored area, or far open space.")
+        return ("the most likely place for it that you can see and have not checked yet -- box that\n"
+                "furniture or surface so the robot drives up to it and sees its top. If no likely place is "
+                "visible,\nbox the most promising way into unexplored space: a doorway, a gap, far open floor.")
 
     def query(self, shots: list[SurveyShot], visited=()) -> ExploreResult:
         if not shots:
@@ -257,6 +284,11 @@ class LlmExplorer:
 
     def _finish(self, res: ExploreResult) -> ExploreResult:
         self.last_result = res
+        if res.waypoint is not None and not res.found:
+            # A fallback waypoint is open floor, not the place the model named;
+            # recording the model's reason would claim that place was checked.
+            why = res.reason if res.waypoint_source == "model" else "open floor (no usable model choice)"
+            self.history.append((np.asarray(res.waypoint, float), why))
         if self.verbose:
             if res.found:
                 d = res.goal.detection
