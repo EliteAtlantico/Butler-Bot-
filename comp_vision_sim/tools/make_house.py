@@ -310,8 +310,10 @@ HEADER = '''<mujoco model="random_house_{seed}">
     <material name="wood"    texture="t_oak" texuniform="true" texrepeat="2 2" specular="0.3" shininess="0.35"/>
     <material name="darkwood" texture="t_walnut" texuniform="true" texrepeat="2 2" specular="0.25" shininess="0.3"/>
     <material name="fabric"  texture="t_sofa" texuniform="true" texrepeat="3 3" specular="0.04"/>
-    <material name="cushion" texture="t_sofa" texuniform="true" texrepeat="2 2" rgba="1.22 1.22 1.22 1" specular="0.04"/>
-    <material name="metal"   texture="t_metal" texuniform="true" texrepeat="1 1" specular="0.75" shininess="0.72" reflectance="0.12"/>
+    <material name="cushion" texture="t_sofa" texuniform="true" texrepeat="2 2" rgba="1.22 1.22 1.22 1"
+              specular="0.04"/>
+    <material name="metal"   texture="t_metal" texuniform="true" texrepeat="1 1" specular="0.75" shininess="0.72"
+              reflectance="0.12"/>
     <material name="carton"  rgba="0.72 0.58 0.38 1" specular="0.05"/>
     <material name="plant"   rgba="0.22 0.42 0.20 1" specular="0.22" shininess="0.35"/>
     <material name="terracotta" rgba="0.68 0.38 0.26 1" specular="0.10"/>
