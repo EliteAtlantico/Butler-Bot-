@@ -34,14 +34,14 @@ class Place(ArmSkill):
               "retreat", "home", "done", "failed")
     BACKUP = 0.45     # m: clears the mast and the stowed hand's swing
 
-    def __init__(self, bot, holding, where, verbose=True):
+    def __init__(self, bot, holding, where, verbose=True, arms=None, keep=()):
         spec = resolve_place(where)      # a PLACES name, or a PlaceSpec found at run time
         if not holding.succeeded:
             raise ValueError("nothing to place: the pick did not succeed")
         item = holding.spec.name
-        super().__init__(bot, holding.arms, holding.grippers,
+        super().__init__(bot, arms or holding.arms, holding.grippers,
                          f"put the {item} {spec.preposition} the {spec.name}",
-                         holding.control_period, verbose)
+                         holding.control_period, verbose, keep=keep)
         self.item, self.where, self.place_spec = item, spec.name, spec
         self.side = holding.plan.side
         self.kind = holding.plan.kind

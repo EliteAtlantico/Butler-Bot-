@@ -63,7 +63,11 @@ What makes that work in other scenes:
 
 Every tool returns `ok`, the reason when it failed (and for `pick_up`, the
 phases it got through), and the robot's pose, and never raises. A fallen robot
-refuses motion tools; one object is carried at a time.
+refuses motion tools. Each hand holds one object, so two can be carried at once:
+`pick_up` uses the free arm (leaving the holding arm, and its grip, alone), and
+`place_held_item` takes `object` to say which to put down. Loose items are dropped
+onto their surfaces when a scene loads (`handwrist.surfaces.settle_loose_items`),
+so no grasp starts on an item resting exactly in a table top.
 
 Guards learned from live runs:
 
