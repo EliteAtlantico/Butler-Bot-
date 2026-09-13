@@ -2,7 +2,7 @@
 
     from integration.pick_adapter import resolve_object, pick_after_arrival
 
-    outcome = pick_after_arrival(bot, "a set of keys")
+    outcome = pick_after_arrival(bot, "the tv remote")
     print(outcome.summary())
 
 What this actually has to bridge is narrower than it looks. `Pick` is already
@@ -13,7 +13,7 @@ XY across. `Pick` takes a CATALOGUE *name* and an estimator callable, and
 finding the object is the estimator's job.
 
 The real gap is vocabulary. The navigator's target is whatever the language
-model called it -- "a set of keys", "the remote control", "my mug" -- while
+model called it -- "the tv remote", "the remote control", "my mug" -- while
 `handwrist.objects.CATALOGUE` is keyed on exactly seven short names. Mapping
 one to the other, and reporting cleanly when no mapping exists, is the whole
 job here.
@@ -38,8 +38,6 @@ for _p in (REPO / "Hand_and_Wrists", REPO / "main_mujoco", REPO / "comp_vision_s
 # actually say -- this is a lookup table, not an ontology, and an unknown word
 # is reported rather than guessed at.
 ALIASES: dict[str, str] = {
-    "key": "keys", "keys": "keys", "keyring": "keys", "key ring": "keys",
-    "keychain": "keys", "car keys": "keys", "house keys": "keys",
     "mug": "mug", "cup": "mug", "coffee": "mug", "coffee cup": "mug",
     "coffee mug": "mug", "tea cup": "mug",
     "can": "can", "tin": "can", "soda": "can", "soda can": "can",
@@ -48,7 +46,6 @@ ALIASES: dict[str, str] = {
     "remote": "remote", "remote control": "remote", "tv remote": "remote",
     "controller": "remote", "clicker": "remote", "zapper": "remote",
     "ball": "ball", "tennis ball": "ball", "toy ball": "ball",
-    "box": "box", "carton": "box", "small box": "box", "block": "box",
 }
 
 _ARTICLES = re.compile(
@@ -128,7 +125,7 @@ def make_pick(bot, object_name: str, use_camera: bool = True, colour: str | None
     perception one.
 
     The camera finds the object by what it is -- an open-vocabulary detector
-    asked for "keys", not a colour window. `colour`, when the request named
+    asked for "remote control", not a colour window. `colour`, when the request named
     one ("the red mug"), only breaks ties between candidates.
     """
     from handwrist.skills import Pick

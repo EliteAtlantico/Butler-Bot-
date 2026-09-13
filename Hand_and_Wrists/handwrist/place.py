@@ -1,6 +1,6 @@
 """Place: put down what a finished Pick is holding, at a named place.
 
-    pick = Pick(bot, "keys", estimator=DetectionEstimator())
+    pick = Pick(bot, "remote", estimator=DetectionEstimator())
     ...run until pick.done...
     give = Place(bot, pick, "person")        # a hand-over: onto the person's palm
     ...run until give.done...

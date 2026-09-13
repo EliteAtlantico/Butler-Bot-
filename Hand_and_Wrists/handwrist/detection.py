@@ -1,7 +1,7 @@
 """Find any object by what it is with the head RGB-D camera, and measure it for a grasp.
 
-This is the estimator `Pick` uses by default: it sees "the ball" or "the keys"
-because they look like a ball and keys. `vision.CameraEstimator` -- which finds
+This is the estimator `Pick` uses by default: it sees "the ball" or "the remote"
+because they look like a ball and a remote. `vision.CameraEstimator` -- which finds
 the seven living-room items by calibrated colour windows -- is kept for
 comparison. This keeps its geometry -- the top-face outline, the silhouette
 width, the handle -- and replaces the colour step with an open-vocabulary
@@ -51,9 +51,10 @@ YOLO_CACHE = 3          # detectors kept, one per vocabulary
 # distractor's: the laundry basket scores 0.30 as a "cardboard box" but higher
 # as a basket, and handing the basket to the grasp planner as the box fails.
 CLAIMED_IOU = 0.5
-# The zoom pass: overlapping TILE x TILE px crops, each looked at ZOOM times
-# bigger. Keys on the floor at pick range are ~20 x 10 px in the head camera,
-# too small for YOLO-World in the whole frame; twice as big, they are found.
+# The zoom pass: overlapping square crops half the image wide (320 px in the
+# 640 x 480 head camera), each looked at ZOOM times bigger. Keys on the floor at
+# pick range are ~20 x 10 px there, too small for YOLO-World in the whole
+# frame; twice as big, they are found.
 TILE, ZOOM = 320, 2
 # every geom group but 2, the household looks (and robot visuals): a support
 # is what an object rests on, not the picture of it
@@ -67,9 +68,7 @@ QUERIES = {
     "can": ("soda can", "can"),
     "bottle": ("bottle", "water bottle"),
     "remote": ("remote control", "tv remote"),
-    "keys": ("keys", "car key"),
     "ball": ("tennis ball", "ball"),
-    "box": ("cardboard box", "box"),
 }
 
 
@@ -186,7 +185,7 @@ class DetectionEstimator(CameraEstimator):
         self.llm_min_confidence = llm_min_confidence
         self.last_box: dict | None = None
         # object name -> what to ask the detector for instead: sim props often do
-        # not look like their names (the "keys" are a small block) but can be
+        # not look like their names but can be
         # described ("small object on the floor")
         self.aliases: dict[str, str] = {}
         self.yolo_error: str | None = None
@@ -229,10 +228,11 @@ class DetectionEstimator(CameraEstimator):
         from PIL import Image
         det = self.yolo(names)
         h, w = rgb.shape[:2]
+        tile = w * TILE // 640                      # the same six tiles at any resolution
         views = [(rgb, 0, 0, 1)]
         if zoom:
-            for x, y in _tiles(w, h):
-                crop = Image.fromarray(np.ascontiguousarray(rgb[y:y + TILE, x:x + TILE]))
+            for x, y in _tiles(w, h, tile):
+                crop = Image.fromarray(np.ascontiguousarray(rgb[y:y + tile, x:x + tile]))
                 big = crop.resize((crop.width * ZOOM, crop.height * ZOOM), Image.BICUBIC)
                 views.append((np.asarray(big), x, y, ZOOM))
         wanted, out, claimed = set(names), [], []

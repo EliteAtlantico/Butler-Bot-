@@ -304,8 +304,8 @@ def test_real_robot_grasp_choices_pick_and_place_on_a_found_surface(living_room)
     robot = living_room
     assert {"coffee_table", "side_table", "basket", "person"} <= set(robot.surfaces)
     assert robot.surfaces["basket"].mode == "drop"
-    too_wide = robot.call("plan_grasp", {"object": "box", "shape": "box"})
-    assert too_wide["ok"] or "wide" in too_wide.get("error", "")
+    boxy = robot.call("plan_grasp", {"object": "remote", "shape": "box", "align_wrist": True})
+    assert boxy["ok"] or "wide" in boxy.get("error", "")
     plans = robot.call("plan_grasp", {"object": "can", "arm": "left"})
     assert plans["ok"] and {p["arm"] for p in plans["plans"]} == {"left"}, plans
     picked = robot.call("pick_up", {"object": "can"})
@@ -340,11 +340,9 @@ def test_camera_measures_objects_it_was_never_calibrated_for():
     robot = RobotTools(verbose=False)
     try:
         truth = TruthByName()
-        robot.detection.aliases["keys"] = "small object on the floor"   # a plain block in the sim
         for name, kw in (("mug", {"handle": True}), ("can", {}),
                          ("remote", {"shape": "box", "align_wrist": True}),
-                         ("ball", {"shape": "sphere", "grip_at": "center"}),
-                         ("keys", {"shape": "box", "align_wrist": True})):
+                         ("ball", {"shape": "sphere", "grip_at": "center"})):
             scenarios.setup(robot.bot, name, np.random.default_rng(1))
             spec = object_spec(name, **kw)
             est, true = robot.detection(robot.bot, spec), truth(robot.bot, spec)
@@ -362,9 +360,10 @@ def test_another_scene_finds_its_own_surfaces_and_picks_there():
     try:
         assert {"table", "coffee_table", "sideboard", "bin", "chair_a"} <= set(robot.surfaces)
         assert not any(n.startswith("wall") for n in robot.surfaces)
-        went = robot.call("go_to", {"x": 0.8, "y": -1.6, "heading_deg": -90})
+        # the ball on the floor of the dining room, from 1.6 m south of it
+        went = robot.call("go_to", {"x": 0.5, "y": 1.6, "heading_deg": 90})
         assert went["ok"], went
-        picked = robot.call("pick_up", {"object": "box", "shape": "box", "align_wrist": True})
+        picked = robot.call("pick_up", {"object": "ball", "shape": "sphere", "grip_at": "center"})
         assert picked["ok"], picked
         # through the doorway into the other room: the lead-in is planned with A*
         placed = robot.call("place_held_item", {"surface": "bin"})

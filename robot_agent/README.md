@@ -7,7 +7,7 @@ can answer you.
 
 ```
 python -m robot_agent "put the remote in the basket, then hand me the can"
-python -m robot_agent --scene apartment "move the box on the floor onto a chair"
+python -m robot_agent --scene apartment "move the ball on the floor onto a chair"
 python -m robot_agent                 # type requests one after another
 python -m robot_agent --voice         # speak them (Whisper, runs locally)
 python -m robot_agent --viewer        # watch it in the MuJoCo viewer
@@ -26,7 +26,7 @@ includes the robot.
 ## No fixed chores
 
 The chores in `Hand_and_Wrists` (fetch, put, tidy) chain the same steps every
-time for seven known items and four known places. Here the model gets those
+time for six known items and four known places. Here the model gets those
 steps as tools and decides how each is done, so it can do things nobody wrote a
 chore for, with objects and furniture it has never seen:
 
@@ -90,7 +90,7 @@ Guards learned from live runs:
   `go_to` / `go_to_surface` first (it refuses from further away).
 * The head camera cannot see the floor within ~1.2 m or a table top within
   ~0.9 m; the tools say so when an object is boxed but too close to measure.
-* Placement tested in the apartment: a floor box carried through the doorway
+* Placement tested in the apartment: a floor ball carried through the doorway
   onto the bin works. Small chairs do not: the seat's legs are closer together
   than the base is wide, so it cannot park, and on one run releasing onto a
   seat levered the robot off its wheels. Surfaces at or above the carry height

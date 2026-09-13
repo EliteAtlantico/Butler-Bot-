@@ -2,7 +2,7 @@
 """How good is the camera's estimate of each item? No driving involved.
 
     python eval_vision.py                 # 20 random placements per item
-    python eval_vision.py -n 50 --objects remote keys
+    python eval_vision.py -n 50 --objects remote ball
 
 Stages the same random trials as eval_pick.py, looks once with the head
 camera from the start pose, and compares the estimate with the simulator's

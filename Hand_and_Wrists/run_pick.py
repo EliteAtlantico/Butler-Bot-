@@ -2,11 +2,11 @@
 """Watch the BracketBot pick something up.
 
     python run_pick.py --object remote              # viewer, scene's own layout
-    python run_pick.py --object keys --random 3     # random placement, seed 3
+    python run_pick.py --object ball --random 3     # random placement, seed 3
     python run_pick.py --object mug --headless      # no window, just the log
 
-Objects: mug, can, remote (coffee table), bottle (side table), keys, ball,
-box (floor). In the viewer: Space pauses, R restarts the pick.
+Objects: mug, can, remote (coffee table), bottle (side table), ball (floor).
+In the viewer: Space pauses, R restarts the pick.
 """
 from __future__ import annotations
 

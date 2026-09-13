@@ -3,8 +3,11 @@ kept -> search those places -> go to the keys, or give up and hand over.
 
     ../.venv/bin/python -m unittest -v test_command_search
 
-Scene: home_search.xml, the two-room apartment with a set of keys on the
+Scene: home_search.xml, the two-room apartment with the TV remote on the
 living-room sideboard, behind the divider and out of sight from the start.
+(The keys were taken out of the simulation; the remote is where they were,
+so the sim-backed searches below look for the remote. The language tests
+still parse "find my keys" -- that is about the sentence, not the scene.)
 
 Offline except `TestCommandLive`, skipped when the server is down or
 SKIP_LIVE_LLM is set.
@@ -66,7 +69,7 @@ def keys_yolo():
     global _KEYS_YOLO
     if _KEYS_YOLO is None:
         from vision_sim.yolo_detector import YoloDetector
-        _KEYS_YOLO = YoloDetector(target="keys")
+        _KEYS_YOLO = YoloDetector(target="remote control")
     return _KEYS_YOLO
 
 
@@ -260,7 +263,7 @@ class KeysOracle(LlmExplorer):
     def query(self, shots, visited=()):
         self.calls += 1
         self.queries += 1
-        keys = self.bot.body_position("keys").copy()
+        keys = self.bot.body_position("remote").copy()
         for s in shots:
             px = visible_pixel(s.obs, keys, tolerance=0.08)
             if px is not None:
@@ -298,7 +301,7 @@ class TestKeysSearch(unittest.TestCase):
                                           max_explore_steps=8,
                                           on_give_up=lambda n, why: calls.append(why))
             run(bot, nav, 400.0)
-            keys = bot.body_position("keys")[:2]
+            keys = bot.body_position("remote")[:2]
             dist = float(np.linalg.norm(bot.position[:2] - keys))
             self.assertFalse(bot.fallen)
             self.assertEqual(nav.outcome, "found", f"{nav.state} {dist:.2f} m away; {nav.log[-8:]}")
@@ -315,7 +318,7 @@ class TestKeysSearch(unittest.TestCase):
     def test_keys_are_hidden_from_the_start(self):
         bot = make_bot(HOME)
         try:
-            keys = bot.body_position("keys").copy()
+            keys = bot.body_position("remote").copy()
             self.assertTrue(all(visible_pixel(s.obs, keys, tolerance=0.08) is None
                                 for s in shots_at(bot, 0.0, 0.0)))
         finally:
@@ -408,7 +411,7 @@ class TestCommandLive(unittest.TestCase):
                                           max_explore_steps=8, on_give_up=lambda n, why: calls.append(why))
             t0 = time.time()
             run(bot, nav, 600.0)
-            keys = bot.body_position("keys")[:2]
+            keys = bot.body_position("remote")[:2]
             dist = float(np.linalg.norm(bot.position[:2] - keys))
             self.assertEqual(nav.outcome, "found", f"{nav.state} {dist:.2f} m away; {calls}; {nav.log}")
             self.assertLess(dist, nav.stop_distance + 0.5)

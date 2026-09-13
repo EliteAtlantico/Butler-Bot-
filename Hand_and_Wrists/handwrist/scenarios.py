@@ -26,9 +26,7 @@ SURFACE = {
     "can": "coffee_table",
     "remote": "coffee_table",
     "bottle": "side_table",
-    "keys": "floor",
     "ball": "floor",
-    "box": "floor",
 }
 
 COFFEE_TOP, COFFEE_NEAR_X = 0.40, 0.95     # top height, near edge (robot side)

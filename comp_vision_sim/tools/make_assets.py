@@ -3,13 +3,14 @@
 
     python tools/make_assets.py            # writes into comp_vision_sim/assets/
 
-Everything here is procedural: no binary asset is committed that cannot be
-regenerated from this file, and no external asset library is needed. Textures
-are numpy arrays / PIL drawings saved as PNG.
+Everything here is procedural except the basket weave, a picture the team
+supplied, kept in assets/src/ (see its README).
+Nothing else committed in assets/ is anything but this file's output.
+Textures are numpy arrays / PIL drawings saved as PNG.
 
 Household items and the person
 ------------------------------
-The seven pickable items and the person are modelled on the real thing, so an
+The five pickable items and the person are modelled on the real thing, so an
 off-the-shelf detector recognises them by what they are, not by a colour it
 was told to look for:
 
@@ -17,9 +18,7 @@ was told to look for:
     can     printed soda can: domed base, necked top, lid and ring pull
     bottle  ribbed water bottle with a wrap-round label and a ridged cap
     remote  TV remote: numbered keypad, power key, d-pad, rockers
-    keys    a bunch: car-key fob with its blade, a brass and a nickel key, ring
     ball    tennis ball: optic-yellow felt and the curved seam
-    box     taped kraft carton with a shipping label
     person  clothed, with a face, one hand held out palm up
 
 Each is a textured OBJ (texture coordinates and normals) plus one PNG atlas,
@@ -542,6 +541,20 @@ def wicker(size=512, tint=(0.74, 0.58, 0.36), rows=16, stakes=20):
     return np.clip(np.array(tint) * shade[..., None], 0, 1)
 
 
+def wicker_photo(size=512):
+    """The basket's weave: the team's photo (assets/src/basket.webp), the
+    largest centred square of it, as a tile the material repeats. Falls back
+    to the procedural weave without the photo."""
+    path = OUT / "src" / "basket.webp"
+    if not path.exists():
+        return wicker()
+    im = Image.open(path).convert("RGB")
+    side = min(im.size)
+    x0, y0 = (im.width - side) // 2, (im.height - side) // 2
+    tile = im.crop((x0, y0, x0 + side, y0 + side)).resize((size, size), Image.LANCZOS)
+    return np.asarray(tile, float) / 255
+
+
 def save_png(path: Path, arr: np.ndarray):
     Image.fromarray((np.clip(arr, 0, 1) * 255).astype(np.uint8)).save(path)
 
@@ -744,81 +757,6 @@ def remote(out: Path) -> dict:
     return {"remote": merge(*parts)}
 
 
-def _key_outline(length=0.056, bow_r=0.0105, blade_w=0.0072):
-    """A house key flat on, bow centred on the origin, blade along +x."""
-    pts = [(bow_r * np.cos(a), bow_r * np.sin(a))
-           for a in np.linspace(np.deg2rad(38), np.deg2rad(322), 34)]
-    tip = length - bow_r
-    half = blade_w / 2
-    pts += [(0.0125, -0.0048), (0.0138, -half), (tip - 0.004, -half), (tip, -0.0008),
-            (tip - 0.0018, half - 0.0012)]
-    xs = np.linspace(tip - 0.005, 0.017, 9)
-    for i, x in enumerate(xs):                        # the cut, tip to shoulder
-        pts.append((x, half if i % 2 else half - 0.0022))
-    pts += [(0.0138, half), (0.0125, 0.0048)]
-    return np.array(pts)
-
-
-def keys(out: Path) -> dict:
-    """Primitives: box half 0.035 x 0.018 x 0.012 centred (0, 0, 0.012), and a
-    ring cylinder r 0.015 h 0.008 at (0.050, 0, 0.004). Two meshes: the metal
-    (keys, ring, fob blade) and the car-key fob's plastic.
-
-    Laid out as a dropped bunch: the fob on the -y side, the nickel key flat on
-    the floor beside it, and the brass key with its bow on the ring and its
-    blade resting across the fob -- which is what brings the bunch up to the
-    primitive's 24 mm."""
-    at = Atlas(256, 256)
-    BRASS, NICKEL, STEEL, EDGE = (0, 0, 128, 128), (128, 0, 256, 128), (0, 128, 128, 256), \
-        (128, 128, 256, 256)
-    long_key, short_key = _key_outline(0.056, 0.0095), _key_outline(0.050, 0.0100)
-    for box_, outline, seed, colour in ((BRASS, short_key, 30, (0.80, 0.63, 0.30)),
-                                        (NICKEL, long_key, 31, (0.74, 0.75, 0.77))):
-        img = solid(128, 128, colour, grain=0.10, seed=seed, blotch=0.14)
-        lo, hi = outline.min(0), outline.max(0)
-        # the hole in the bow, toward its end, where the ring goes through
-        yy, xx = np.mgrid[0:128, 0:128]
-        hx = (-0.0040 - lo[0]) / (hi[0] - lo[0]) * 128
-        hy = hi[1] / (hi[1] - lo[1]) * 128
-        img[(xx - hx) ** 2 + (yy - hy) ** 2 < 5.5 ** 2] = (0.08, 0.07, 0.06)
-        at.paste(box_, img)
-    at.paste(STEEL, solid(128, 128, (0.62, 0.64, 0.67), grain=0.08, seed=32))
-    at.paste(EDGE, solid(128, 128, (0.55, 0.52, 0.45), grain=0.08, seed=33))
-    tilt = np.deg2rad(23.0)
-    key1 = slab(short_key, 0.0022, BRASS, EDGE, at).moved(rot_y(tilt) @ rot_z(np.pi),
-                                                          (0.036, -0.003, 0.0060))
-    key2 = slab(long_key, 0.0022, NICKEL, EDGE, at).moved(rot_z(np.pi - 0.09),
-                                                          (0.032, 0.0065, 0.0011))
-    a = np.linspace(0, 2 * np.pi, 49)
-    ring = tube(np.stack([0.050 + 0.0115 * np.cos(a), 0.0115 * np.sin(a), np.full_like(a, 0.004)], 1),
-                0.0011, STEEL, at, seg=8, caps=False)
-    link = tube(np.array([[0.0110, -0.007, 0.008], [0.025, -0.006, 0.007], [0.0385, -0.004, 0.0045]]),
-                0.0012, STEEL, at, seg=8)
-    fob_blade = np.array([(-0.0215, -0.0035), (-0.0325, -0.0035), (-0.0338, -0.001),
-                          (-0.0325, 0.0035), (-0.030, 0.0012), (-0.027, 0.0035), (-0.024, 0.0012),
-                          (-0.0215, 0.0035)])
-    blade = slab(fob_blade, 0.0024, NICKEL, EDGE, at).moved(t=(0.0, -0.007, 0.0075))
-    metal = merge(key1, key2, ring, link, blade)
-
-    ft = Atlas(256, 176)
-    FOB = (0, 0, 256, 176)
-    ft.paste(FOB, solid(176, 256, (0.06, 0.06, 0.065), grain=0.05, seed=34, blotch=0.10))
-    for k, (cx, glyph) in enumerate(((0.40, "lock"), (0.66, "open"))):
-        x0, y0 = cx * 256, 88
-        ft.draw.rounded_rectangle([x0 - 24, y0 - 30, x0 + 24, y0 + 30], 10, fill=(38, 38, 42))
-        ft.draw.rectangle([x0 - 8, y0 - 2, x0 + 8, y0 + 14], fill=(215, 215, 215))
-        if glyph == "lock":
-            ft.draw.arc([x0 - 7, y0 - 14, x0 + 7, y0 + 4], 180, 360, fill=(215, 215, 215), width=3)
-        else:
-            ft.draw.arc([x0 - 2, y0 - 16, x0 + 12, y0 + 2], 180, 360, fill=(215, 215, 215), width=3)
-    ft.draw.ellipse([200, 70, 236, 106], outline=(170, 170, 175), width=4)
-    fob = superquadric((0.0165, 0.010, 0.0075), FOB, ft, e_lat=0.40, e_lon=0.50, nu=40, nv=16,
-                       uv="top").moved(t=(-0.005, -0.007, 0.0075))
-    at.save(out / "keys_metal.png")
-    ft.save(out / "keys_fob.png")
-    return {"keys_metal": metal, "keys_fob": fob}
-
-
 def ball(out: Path) -> dict:
     """Primitive: sphere r 0.035 centred (0, 0, 0.035). A tennis ball."""
     at = Atlas(512, 256)
@@ -844,59 +782,6 @@ def ball(out: Path) -> dict:
     at.save(out / "ball.png")
     return {"ball": superquadric((0.035, 0.035, 0.035), BOX, at, nu=64, nv=32)
             .moved(t=(0, 0, 0.035))}
-
-
-def box(out: Path) -> dict:
-    """Primitive: box half 0.060 x 0.025 x 0.025, z 0..0.050. A taped carton."""
-    at = Atlas(1024, 512)
-    F = {"+z": (0, 0, 480, 200), "+y": (0, 200, 480, 400), "-y": (512, 0, 992, 200),
-         "-z": (512, 200, 992, 400), "+x": (0, 410, 100, 510), "-x": (120, 410, 220, 510)}
-    kraft = (0.66, 0.50, 0.32)
-
-    def face(key, seed):
-        x0, y0, x1, y1 = F[key]
-        img = solid(y1 - y0, x1 - x0, kraft, grain=0.10, seed=seed, blotch=0.12)
-        fib = _noise((y1 - y0, (x1 - x0) // 16 + 1), 3, seed=seed + 50)
-        img *= (0.94 + 0.10 * np.repeat(fib, 16, axis=1)[:, :x1 - x0])[..., None]
-        img[:3], img[-3:], img[:, :3], img[:, -3:] = (img[:3] * 0.75, img[-3:] * 0.75,
-                                                      img[:, :3] * 0.75, img[:, -3:] * 0.75)
-        return img
-
-    top = face("+z", 40)
-    top[97:103] *= 0.55                                       # flaps meet
-    top[70:130] = top[70:130] * 0.6 + np.array([0.86, 0.76, 0.58]) * 0.4   # tape
-    top[70:72] *= 0.8
-    top[128:130] *= 0.8
-    at.paste(F["+z"], top)
-    at.paste(F["-z"], face("-z", 41))
-    for key, seed in (("+x", 42), ("-x", 43)):
-        end = face(key, seed)
-        end[:30, 35:65] = end[:30, 35:65] * 0.6 + np.array([0.86, 0.76, 0.58]) * 0.4
-        at.paste(F[key], end)
-    side = face("+y", 44)
-    at.paste(F["+y"], side)
-    x0, y0 = F["+y"][:2]
-    at.draw.rectangle([x0 + 40, y0 + 30, x0 + 250, y0 + 170], fill=(246, 244, 238),
-                      outline=(200, 198, 190))
-    for k in range(5):
-        at.draw.rectangle([x0 + 55, y0 + 45 + 14 * k, x0 + 55 + (170 - 25 * (k % 3)), y0 + 50 + 14 * k],
-                          fill=(60, 60, 60))
-    for k in range(34):
-        bw = 2 if k % 3 else 4
-        at.draw.rectangle([x0 + 55 + 5 * k, y0 + 125, x0 + 55 + 5 * k + bw, y0 + 160], fill=(15, 15, 15))
-    at.draw.text((x0 + 370, y0 + 100), "SHIP TO", font=font(22), fill=(40, 30, 20), anchor="mm")
-    other = face("-y", 45)
-    at.paste(F["-y"], other)
-    x0, y0 = F["-y"][:2]
-    for dx in (60, 110):
-        at.draw.line([(x0 + dx, y0 + 150), (x0 + dx, y0 + 70)], fill=(30, 25, 20), width=7)
-        at.draw.polygon([(x0 + dx - 16, y0 + 78), (x0 + dx + 16, y0 + 78), (x0 + dx, y0 + 50)],
-                        fill=(30, 25, 20))
-    at.draw.text((x0 + 85, y0 + 175), "THIS SIDE UP", font=font(16), fill=(30, 25, 20), anchor="mm")
-    at.draw.rectangle([x0 + 220, y0 + 60, x0 + 440, y0 + 140], outline=(170, 30, 25), width=5)
-    at.draw.text((x0 + 330, y0 + 100), "FRAGILE", font=font(44), fill=(170, 30, 25), anchor="mm")
-    at.save(out / "box.png")
-    return {"box": cuboid(np.array([0.060, 0.025, 0.025]), F, at).moved(t=(0, 0, 0.025))}
 
 
 def person(out: Path) -> dict:
@@ -997,7 +882,7 @@ def person(out: Path) -> dict:
     return {"person": merge(*parts)}
 
 
-HOUSEHOLD = (mug, can, bottle, remote, keys, ball, box, person)
+HOUSEHOLD = (mug, can, bottle, remote, ball, person)
 
 
 def main():
@@ -1019,7 +904,7 @@ def main():
         "floor_oak": oak_floor(), "wall_plaster": plaster(),
         "sofa_weave": woven(), "wood_walnut": walnut(),
         "wood_oak": walnut(tint=(0.45, 0.30, 0.17)),
-        "metal_brushed": brushed(), "wicker": wicker(),
+        "metal_brushed": brushed(), "wicker": wicker_photo(),
     }
     for name, arr in textures.items():
         save_png(OUT / f"{name}.png", arr)

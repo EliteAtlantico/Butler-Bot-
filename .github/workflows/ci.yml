@@ -92,7 +92,7 @@ jobs:
             ~/.config/Ultralytics
             ~/.cache/clip
           key: yolo-weights-v1
-      - name: Smoke -- give up -> phone remote (Seam D), drive -> pick the keys (Seam C)
+      - name: Smoke -- give up -> phone remote (Seam D), drive -> pick the remote (Seam C)
         run: python ci/smoke_pipeline.py
       - name: eval_pick vs results/pick_eval.json
         working-directory: Hand_and_Wrists
@@ -101,15 +101,15 @@ jobs:
           # exact: Linux (WSL Ubuntu, py3.12) reproduced the Windows-made
           # baseline bit for bit, 84/84 -- so any drift here is the code.
           python ../ci/compare_evals.py pick_eval "$RUNNER_TEMP/eval/pick_eval.json" --mode exact
-      - name: eval_tasks vs results/task_eval.json
+      - name: eval_tasks --truth vs results/task_eval_truth.json
         working-directory: Hand_and_Wrists
         run: |
-          python eval_tasks.py -n 2 --seed 0 --workers 4 --out "$RUNNER_TEMP/eval/task_eval"
-          # outcome, not exact: this eval finds items with the camera (YOLO-World
-          # on the rendered models), and Mesa renders differently from the
-          # Windows/WGL box the baseline came from, so final positions drift by
-          # mm and sim_time by seconds -- a platform difference, not code.
-          python ../ci/compare_evals.py task_eval "$RUNNER_TEMP/eval/task_eval.json" --mode outcome
+          # Told where the items are: the chores' arm, place and drive logic,
+          # deterministic and fast. The camera version finds items with
+          # YOLO-World on a CPU runner -- minutes per trial, far past this job's
+          # hour -- so detection is checked by the unit tests instead.
+          python eval_tasks.py -n 2 --seed 0 --workers 4 --truth --out "$RUNNER_TEMP/eval/task_eval_truth"
+          python ../ci/compare_evals.py task_eval_truth "$RUNNER_TEMP/eval/task_eval_truth.json" --mode outcome
       - name: Keep the eval results
         if: always()
         uses: actions/upload-artifact@v4

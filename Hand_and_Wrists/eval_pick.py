@@ -3,7 +3,7 @@
 
     python eval_pick.py                          # 8 trials of every object
     python eval_pick.py --vision                 # find items with the camera
-    python eval_pick.py --objects remote keys -n 20
+    python eval_pick.py --objects remote ball -n 20
     python eval_pick.py --seed 7 --workers 4
 
 Each trial resets the home scene, drops one object at a random spot and yaw

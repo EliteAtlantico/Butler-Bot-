@@ -177,7 +177,7 @@ def test_a_generated_house_has_the_same_looks(tmp_path):
         m = mujoco.MjModel.from_xml_path(str(out))
     finally:
         out.unlink()
-    for name in ("mug", "can", "remote", "box"):
+    for name in ("mug", "can", "remote"):
         b = _body(m, name)
         assert any(_is_look(m, g) and m.geom_bodyid[g] == b for g in range(m.ngeom)), name
 
@@ -228,9 +228,9 @@ def test_find_asks_for_the_object_not_the_colour():
     see.yolo_boxes = boxes
     rgb = np.zeros((20, 20, 3), np.uint8)
     see.find(rgb, "red mug")
-    see.find(rgb, "keys")
+    see.find(rgb, "remote")
     see.find(rgb, "sunglasses")
-    assert asked == [["mug", "cup"], ["keys", "car key"], ["sunglasses"]]
+    assert asked == [["mug", "cup"], ["remote control", "tv remote"], ["sunglasses"]]
 
 
 class _FakeYolo:

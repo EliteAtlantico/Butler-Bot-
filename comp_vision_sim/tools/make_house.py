@@ -180,11 +180,6 @@ ITEM_XML = {
             material="remote" mass="0.12"/>
       <geom class="look" mesh="look_remote" material="look_remote"/>
     </body>\n''',
-    "box": '''    <body name="box" pos="{x:.3f} {y:.3f} {z:.3f}" euler="0 0 0.3">
-      <freejoint name="box_free"/>
-      <geom name="box_body" class="item" type="box" pos="0 0 0.025" size="0.06 0.025 0.025" material="box" mass="0.10"/>
-      <geom class="look" mesh="look_box" material="look_box"/>
-    </body>\n''',
 }
 
 # The place destination. handwrist's PLACES looks for a body called `basket`
@@ -315,7 +310,7 @@ def build(seed: int):
         return None
 
     # ---- the task: things to pick up, and somewhere to put them ----------
-    # Items go on a 0.55 m console within 0.10 m of its edge, or on the floor.
+    # Items go on a 0.55 m console within 0.10 m of its edge.
     # Both numbers are measured, not chosen: the arm plans no grasp at all
     # above ~0.55 m, and none more than about 0.10 m onto a surface, because
     # the base has to stop at the furniture and reach the rest of the way.
@@ -349,17 +344,6 @@ def build(seed: int):
     for k, name in enumerate(("mug", "can", "remote")):
         parts.append(ITEM_XML[name].format(x=cx - 0.40 + 0.40 * k, y=cy - 0.14, z=0.55))
         task["items"].append(name)
-    # one on the floor, out in the open, so a floor grasp is exercised too
-    for _ in range(120):
-        x = rng.uniform(inner.x0, inner.x1)
-        y = rng.uniform(inner.y0, inner.y1)
-        rect = (x - 0.45, y - 0.45, x + 0.45, y + 0.45)
-        if any(overlaps(rect, b, 0.30) for b in blocked):
-            continue
-        parts.append(ITEM_XML["box"].format(x=x, y=y, z=0.0))
-        blocked.append((x - 0.12, y - 0.12, x + 0.12, y + 0.12))
-        task["items"].append("box")
-        break
 
     # the basket goes in the SPAWN room, so every put crosses a doorway
     binner = spawn_room.inset(CLEAR + 0.2)
@@ -455,7 +439,6 @@ HEADER = '''<mujoco model="random_house_{seed}">
     <material name="mug"    rgba="0.85 0.18 0.18 1"/>
     <material name="can"    rgba="0.15 0.70 0.25 1"/>
     <material name="remote" rgba="0.50 0.20 0.75 1"/>
-    <material name="box"    rgba="0.10 0.65 0.70 1"/>
   </asset>
 
   <!-- Item contact settings, from scene_home.xml. The noslip pass stops a

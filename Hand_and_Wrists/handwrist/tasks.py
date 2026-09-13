@@ -1,6 +1,6 @@
 """Chores: skills chained into tasks you can ask for by name.
 
-    task = make_task(bot, "fetch", item="keys")          # hand them to the person
+    task = make_task(bot, "fetch", item="remote")        # hand it to the person
     task = make_task(bot, "put", item="remote", to="basket")
     task = make_task(bot, "tidy")                        # coffee table -> basket
     while not task.done:

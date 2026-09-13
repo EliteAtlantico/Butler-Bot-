@@ -1,20 +1,20 @@
 <mujoco model="home_search">
   <!-- The end-to-end demo scene: explorable rooms AND pickable objects.
 
-       apartment.xml plus a set of keys, for natural-language search ("find my
-       keys"), plus scene_home.xml's pickable items so the same scene carries
-       the command -> explore -> navigate -> pick pipeline to the end. Before
-       this, no single scene had both: home_search.xml had rooms and nothing
-       to grasp, scene_home.xml had objects and no rooms to explore.
+       apartment.xml plus scene_home.xml's pickable items, so the same scene
+       carries the command -> explore -> navigate -> pick pipeline to the end.
+       Before this, no single scene had both: home_search.xml had rooms and
+       nothing to grasp, scene_home.xml had objects and no rooms to explore.
 
        scene_home.xml's `person` body is deliberately NOT carried over -- it
        exists for hand-over, and this integration exposes Pick only.
 
-       The keys lie on the sideboard in the living room: behind the divider,
-       invisible from the start in room A, in a place people really leave
-       keys. Room A offers plausible decoys (dining table, bookshelf) with
-       little on them, so a search that only follows "where keys usually are"
-       still has to look and move on.
+       The search target is the TV remote, on the sideboard in the living
+       room: behind the divider, invisible from the start in room A. (It was a
+       set of keys; the keys were taken out of the simulation.) Room A offers
+       plausible decoys (dining table, bookshelf) with little on them, so a
+       search that only follows "where it usually is" still has to look and
+       move on.
 
        Below: the original apartment notes.
 
@@ -113,14 +113,12 @@
     <material name="can"    rgba="0.15 0.70 0.25 1"/>
     <material name="bottle" rgba="0.92 0.80 0.10 1"/>
     <material name="remote" rgba="0.50 0.20 0.75 1"/>
-    <material name="keys"   rgba="0.95 0.50 0.10 1"/>
     <material name="ball"   rgba="0.95 0.30 0.65 1"/>
-    <material name="box"    rgba="0.10 0.65 0.70 1"/>
   </asset>
 
   <!-- Every pickable object is a free body whose name matches a class in
        Hand_and_Wrists/handwrist/objects.py, and whose graspable geom carries
-       the name that class expects (mug_body, keys_body, ...). Items have
+       the name that class expects (mug_body, remote_body, ...). Items have
        higher contact priority than the finger pads so the pads' friction
        governs the grasp. Copied from scene_home.xml rather than re-authored:
        the grasp tuning and the committed pick_eval baselines depend on these
@@ -282,33 +280,17 @@
 
     <!-- A low console, 0.55 m. Measured, not chosen for looks: the arm plans a
          grasp from a 0.55 m surface and none at all from 0.60 m or above, so a
-         realistic 0.84 m sideboard would put the keys permanently out of
+         realistic 0.84 m sideboard would put the remote permanently out of
          reach and the fetch half of the demo could never finish. -->
     <body name="sideboard" pos="9.6 -3.3 0">
       <geom type="box" pos="0 0 0.275" size="0.85 0.24 0.275" material="darkwood"/>
       <geom type="box" pos="0 -0.26 0.40" size="0.30 0.02 0.12" material="wood"/>
     </body>
     <!-- ============ pickable items ============
-         The search target stays where it was: on the living-room sideboard
-         (top z 0.84), behind the divider and out of sight from the start.
-         The geometry is scene_home.xml's pickable keys rather than the
-         decorative set that stood here before -- handwrist's CATALOGUE grasps
-         the geom named `keys_body`, and the decorative version had no such
-         geom and no freejoint, so the arm could never have picked it up. -->
-    <body name="keys" pos="9.35 -3.16 0.552" euler="0 0 0.5">
-      <freejoint name="keys_free"/>
-      <inertial pos="0.00714286 0 0.0108571" quat="0 0.734496 0 0.678613" mass="0.07"
-                diaginertia="5.38052e-05 4.9973e-05 1.02528e-05"/>
-      <!-- collision + what the gripper closes on: unchanged primitives -->
-      <geom name="keys_body" class="item" type="box" pos="0 0 0.012" size="0.035 0.018 0.012"
-            material="keys" mass="0.06" group="3"/>
-      <geom name="keys_ring" class="item" type="cylinder" pos="0.05 0 0.004" size="0.015 0.004"
-            material="keys" mass="0.01" group="3"/>
-      <!-- what you see: a car-key fob, a brass and a nickel key on a split ring -->
-      <geom class="look" mesh="look_keys_metal" material="look_keys_metal"/>
-      <geom class="look" mesh="look_keys_fob" material="look_keys_fob"/>
-    </body>
-
+         The search target, the remote, is on the living-room sideboard (top z
+         0.55), 0.10 m in from its near edge, behind the divider and out of
+         sight from the start -- where the keys were before they were taken
+         out of the simulation. -->
     <!-- On the living-room coffee table (top z 0.41), all within 0.10 m of its
          near edge at x 7.85. Measured: the planner finds 4 grasps at a 0.10 m
          inset and none at 0.20 m, because the base has to stop at the table
@@ -332,7 +314,7 @@
             material="can" mass="0.15" group="3"/>
       <geom class="look" mesh="look_can" material="look_can"/>
     </body>
-    <body name="remote" pos="7.93 0.62 0.41" euler="0 0 0.6">
+    <body name="remote" pos="9.35 -3.16 0.552" euler="0 0 0.5">
       <freejoint name="remote_free"/>
       <inertial pos="0 0 0.0125" quat="1 0 0 0" mass="0.12"
                 diaginertia="2.929e-05 0.00033025 0.00034704"/>
@@ -362,12 +344,6 @@
       <geom name="ball_body" class="item" type="sphere" pos="0 0 0.035" size="0.035"
             material="ball" mass="0.06" condim="6" friction="1.0 0.02 0.002"/>
       <geom class="look" mesh="look_ball" material="look_ball"/>
-    </body>
-    <body name="box" pos="0.80 -3.20 0" euler="0 0 0.3">
-      <freejoint name="box_free"/>
-      <geom name="box_body" class="item" type="box" pos="0 0 0.025" size="0.06 0.025 0.025"
-            material="box" mass="0.10"/>
-      <geom class="look" mesh="look_box" material="look_box"/>
     </body>
   </worldbody>
 </mujoco>
