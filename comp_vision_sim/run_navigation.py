@@ -32,6 +32,9 @@ YOLO_DEFAULT_WEIGHTS = "yolov8l-worldv2.pt"   # == vision_sim.yolo_detector.DEFA
 # deliberately does not depend on them, so only the entry points bridge over.
 sys.path.insert(0, str(HERE))
 sys.path.insert(0, str(HERE.parent / "main_mujoco"))
+# Repo root, so `integration.pick_adapter` resolves under --pick. Imported
+# lazily at the call site, so a run without --pick never touches the arm code.
+sys.path.insert(0, str(HERE.parent))
 
 # Ground truth for scoring the detector only -- the navigator never reads it.
 # Extended objects are segments: scoring a 5.3 m wall against its centre point
@@ -80,6 +83,15 @@ def parse_args(argv=None):
     p.add_argument("--animate-movers", type=float, default=0.0, metavar="MPS",
                    help="shuttle every mocap body in the scene across the route "
                         "at this speed, to exercise moving obstacles")
+    p.add_argument("--pick", action="store_true",
+                   help="on arrival, hand over to the arm skills and pick the "
+                        "target up (needs a scene with pickable objects)")
+    p.add_argument("--pick-truth", action="store_true",
+                   help="let the pick read the object's pose from the simulator "
+                        "instead of finding it with the head camera; for telling "
+                        "an arm failure apart from a perception one")
+    p.add_argument("--pick-timeout", type=float, default=90.0, metavar="SEC",
+                   help="sim seconds to allow for the pick (default 90)")
     p.add_argument("--weights", default=None,
                    help="YOLO weights: a pretrained Ultralytics model name, fetched "
                         "into weights/ on first use, or a path such as the net "
@@ -518,11 +530,28 @@ def main():
             bot.step(0.1, controller=nav)
             tick()
 
+    # Seam C: the navigator stopped at its stand-off, so hand the object over
+    # to the arm skills. Only on a real arrival -- giving up, falling over or
+    # running out of clock are not places to start reaching for something.
+    pick_outcome = None
+    if args.pick:
+        if nav.state == nav.ARRIVED and not bot.fallen:
+            from integration.pick_adapter import pick_after_arrival
+            what = (args.task.description or args.task.target) if args.task else args.target
+            pick_outcome = pick_after_arrival(bot, what or nav.goal_label,
+                                              use_camera=not args.pick_truth,
+                                              timeout=args.pick_timeout)
+        else:
+            print(f"\npick skipped: navigator finished in state {nav.state!r}, "
+                  f"not {nav.ARRIVED!r}")
+
     elapsed = time.time() - wall
     track = np.array(track)
     truth = scene_has_truth(args.scene)
     print(f"\nstate={nav.state} fallen={bot.fallen} "
           f"sim={bot.time:.1f}s wall={elapsed:.1f}s")
+    if pick_outcome is not None:
+        print(f"pick: {pick_outcome.summary()}")
     print(f"final position {np.round(bot.position[:2], 2)}")
     if nav.goal_xy is not None:
         print(f"  {np.linalg.norm(bot.position[:2] - nav.goal_xy):.2f} m from the goal")

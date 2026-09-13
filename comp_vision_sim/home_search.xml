@@ -75,7 +75,7 @@
     <material name="can"    rgba="0.15 0.70 0.25 1"/>
     <material name="bottle" rgba="0.92 0.80 0.10 1"/>
     <material name="remote" rgba="0.50 0.20 0.75 1"/>
-    <material name="keyring" rgba="0.95 0.50 0.10 1"/>
+    <material name="keys"   rgba="0.95 0.50 0.10 1"/>
     <material name="ball"   rgba="0.95 0.30 0.65 1"/>
     <material name="box"    rgba="0.10 0.65 0.70 1"/>
   </asset>
@@ -185,9 +185,13 @@
       <geom type="cylinder" pos="0 0 0.22" size="0.19 0.22" material="metal"/>
     </body>
 
+    <!-- A low console, 0.55 m. Measured, not chosen for looks: the arm plans a
+         grasp from a 0.55 m surface and none at all from 0.60 m or above, so a
+         realistic 0.84 m sideboard would put the keys permanently out of
+         reach and the fetch half of the demo could never finish. -->
     <body name="sideboard" pos="9.6 -3.3 0">
-      <geom type="box" pos="0 0 0.42" size="0.85 0.24 0.42" material="darkwood"/>
-      <geom type="box" pos="0 -0.26 0.58" size="0.30 0.02 0.16" material="wood"/>
+      <geom type="box" pos="0 0 0.275" size="0.85 0.24 0.275" material="darkwood"/>
+      <geom type="box" pos="0 -0.26 0.40" size="0.30 0.02 0.12" material="wood"/>
     </body>
     <!-- ============ pickable items ============
          The search target stays where it was: on the living-room sideboard
@@ -196,35 +200,45 @@
          decorative set that stood here before -- handwrist's CATALOGUE grasps
          the geom named `keys_body`, and the decorative version had no such
          geom and no freejoint, so the arm could never have picked it up. -->
-    <body name="keys" pos="9.35 -3.18 0.842" euler="0 0 0.5">
+    <body name="keys" pos="9.35 -3.16 0.552" euler="0 0 0.5">
       <freejoint name="keys_free"/>
       <geom name="keys_body" class="item" type="box" pos="0 0 0.012" size="0.035 0.018 0.012"
-            material="keyring"/>
+            material="keys" mass="0.06"/>
       <geom name="keys_ring" class="item" type="cylinder" pos="0.05 0 0.004" size="0.015 0.004"
-            material="steel"/>
+            material="keys" mass="0.01"/>
     </body>
 
-    <!-- on the living-room coffee table (top z 0.41) -->
-    <body name="mug" pos="8.20 0.52 0.41">
+    <!-- On the living-room coffee table (top z 0.41), all within 0.10 m of its
+         near edge at x 7.85. Measured: the planner finds 4 grasps at a 0.10 m
+         inset and none at 0.20 m, because the base has to stop at the table
+         and the arm reaches the rest of the way. Items placed centrally on a
+         1.1 m-deep table look tidier and cannot be picked up. -->
+    <body name="mug" pos="7.94 0.20 0.41">
       <freejoint name="mug_free"/>
-      <geom name="mug_body" class="item" type="cylinder" pos="0 0 0.05" size="0.04 0.05" material="mug"/>
-      <geom name="mug_handle" class="item" type="box" pos="0 0.05 0.05" size="0.008 0.012 0.03" material="mug"/>
+      <geom name="mug_body" class="item" type="cylinder" pos="0 0 0.05" size="0.04 0.05"
+            material="mug" mass="0.22"/>
+      <geom name="mug_handle" class="item" type="box" pos="0 0.05 0.05" size="0.008 0.012 0.03"
+            material="mug" mass="0.03"/>
     </body>
-    <body name="can" pos="8.48 0.30 0.41">
+    <body name="can" pos="7.94 0.42 0.41">
       <freejoint name="can_free"/>
-      <geom name="can_body" class="item" type="cylinder" pos="0 0 0.06" size="0.033 0.06" material="can"/>
+      <geom name="can_body" class="item" type="cylinder" pos="0 0 0.06" size="0.033 0.06"
+            material="can" mass="0.15"/>
     </body>
-    <body name="remote" pos="8.66 0.55 0.41" euler="0 0 0.6">
+    <body name="remote" pos="7.93 0.62 0.41" euler="0 0 0.6">
       <freejoint name="remote_free"/>
       <geom name="remote_body" class="item" type="box" pos="0 0 0.0125" size="0.09 0.024 0.0125"
-            material="remote"/>
+            material="remote" mass="0.12"/>
     </body>
 
-    <!-- on the dining table in room A (top z 0.76), so room A is not a dead end -->
-    <body name="bottle" pos="2.30 -1.45 0.76">
+    <!-- The bottle stands on the floor beside the dining table rather than on
+         it: that table's top is 0.76 m and nothing is pickable above 0.55 m. -->
+    <body name="bottle" pos="1.35 -1.60 0">
       <freejoint name="bottle_free"/>
-      <geom name="bottle_body" class="item" type="cylinder" pos="0 0 0.09" size="0.035 0.09" material="bottle"/>
-      <geom name="bottle_neck" class="item" type="cylinder" pos="0 0 0.20" size="0.016 0.02" material="bottle"/>
+      <geom name="bottle_body" class="item" type="cylinder" pos="0 0 0.09" size="0.035 0.09"
+            material="bottle" mass="0.20"/>
+      <geom name="bottle_neck" class="item" type="cylinder" pos="0 0 0.20" size="0.016 0.02"
+            material="bottle" mass="0.02"/>
     </body>
 
     <!-- on the floor, clear of the doorway corridor and both rooms' traffic.
@@ -232,11 +246,13 @@
          occupancy grid as an obstacle. -->
     <body name="ball" pos="0.50 3.20 0">
       <freejoint name="ball_free"/>
-      <geom name="ball_body" class="item" type="sphere" pos="0 0 0.035" size="0.035" material="ball"/>
+      <geom name="ball_body" class="item" type="sphere" pos="0 0 0.035" size="0.035"
+            material="ball" mass="0.06" condim="6" friction="1.0 0.02 0.002"/>
     </body>
     <body name="box" pos="0.80 -3.20 0" euler="0 0 0.3">
       <freejoint name="box_free"/>
-      <geom name="box_body" class="item" type="box" pos="0 0 0.025" size="0.06 0.025 0.025" material="box"/>
+      <geom name="box_body" class="item" type="box" pos="0 0 0.025" size="0.06 0.025 0.025"
+            material="box" mass="0.10"/>
     </body>
   </worldbody>
 </mujoco>
