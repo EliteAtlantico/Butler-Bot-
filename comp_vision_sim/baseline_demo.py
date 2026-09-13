@@ -41,11 +41,70 @@ def parse_args():
     p.add_argument("--seed", type=int, default=35)
     p.add_argument("--items", type=int, default=4, help="how many to tidy away")
     p.add_argument("--viewer", action="store_true")
+    p.add_argument("--record", default=None, metavar="DIR",
+                   help="write an mp4 of a chase camera, and a still per leg, into DIR")
     p.add_argument("--speed", type=float, default=1.0)
     p.add_argument("--scene", default=None, help="reuse an existing house")
     p.add_argument("--budget", type=float, default=150.0,
                    help="sim seconds allowed per leg")
     return p.parse_args()
+
+
+class Recorder:
+    """A chase camera on the robot, written straight to an mp4.
+
+    Every frame carries the leg it belongs to, so the video reads as a log:
+    whatever the run reports at the end, you can see the moment it happened.
+    """
+
+    W, H, FPS = 960, 540, 25
+
+    def __init__(self, bot, out_dir):
+        import cv2
+        import mujoco
+        import numpy as np
+        self._cv2, self._np = cv2, np
+        self.bot = bot
+        self.dir = Path(out_dir)
+        self.dir.mkdir(parents=True, exist_ok=True)
+        self.renderer = mujoco.Renderer(bot.model, self.H, self.W)
+        self.cam = mujoco.MjvCamera()
+        mujoco.mjv_defaultFreeCamera(bot.model, self.cam)
+        self.cam.distance, self.cam.elevation = 4.4, -30.0
+        self.writer = cv2.VideoWriter(str(self.dir / "run.mp4"),
+                                      cv2.VideoWriter_fourcc(*"mp4v"), self.FPS,
+                                      (self.W, self.H))
+        if not self.writer.isOpened():
+            raise RuntimeError(f"could not open {self.dir / 'run.mp4'} for writing")
+        self.caption = ""
+        self.frames = 0
+        self._az = 120.0
+
+    def frame(self):
+        cv2, np = self._cv2, self._np
+        xy = self.bot.position[:2]
+        self.cam.lookat[:] = (xy[0], xy[1], 0.45)
+        want = float(np.rad2deg(self.bot.yaw)) + 180.0
+        self._az += ((want - self._az + 180.0) % 360.0 - 180.0) * 0.04
+        self.cam.azimuth = self._az
+        self.renderer.update_scene(self.bot.data, camera=self.cam)
+        img = cv2.cvtColor(self.renderer.render(), cv2.COLOR_RGB2BGR)
+        bar = img.copy()
+        cv2.rectangle(bar, (0, self.H - 42), (self.W, self.H), (0, 0, 0), -1)
+        cv2.addWeighted(bar, 0.55, img, 0.45, 0, img)
+        cv2.putText(img, self.caption[:96], (16, self.H - 15),
+                    cv2.FONT_HERSHEY_SIMPLEX, 0.62, (255, 255, 255), 1, cv2.LINE_AA)
+        cv2.putText(img, f"t={self.bot.time:6.1f}s", (self.W - 150, self.H - 15),
+                    cv2.FONT_HERSHEY_SIMPLEX, 0.55, (180, 220, 255), 1, cv2.LINE_AA)
+        self.writer.write(img)
+        self.frames += 1
+        return img
+
+    def still(self, name):
+        self._cv2.imwrite(str(self.dir / f"{name}.png"), self.frame())
+
+    def close(self):
+        self.writer.release()
 
 
 def main():
@@ -59,7 +118,7 @@ def main():
     # ---------------------------------------------------------- the house
     if args.scene:
         scene = Path(args.scene)
-        task = None
+        task, goal = None, None
     else:
         seed, built = args.seed, None
         while built is None:
@@ -94,6 +153,7 @@ def main():
     if args.viewer:
         import mujoco.viewer
         viewer = mujoco.viewer.launch_passive(bot.model, bot.data)
+    rec = Recorder(bot, args.record) if args.record else None
     wall0, t_wall = time.time(), time.time()
 
     def run(controller, done, budget, label):
@@ -101,6 +161,8 @@ def main():
         the viewer, so every leg is watchable rather than only the last."""
         nonlocal t_wall
         t0 = bot.time
+        if rec is not None:
+            rec.caption = label
         while bot.time - t0 < budget and not bot.fallen and not done():
             if viewer is not None and not viewer.is_running():
                 return "window closed"
@@ -110,6 +172,8 @@ def main():
                 lag = (bot.time - t0) / max(args.speed, 1e-6) - (time.time() - t_wall)
                 if lag > 0:
                     time.sleep(min(lag, 0.05))
+            if rec is not None:
+                rec.frame()
         t_wall = time.time()
         if bot.fallen:
             return "fell over"
@@ -129,6 +193,8 @@ def main():
         if viewer is not None:
             viewer.sync()
             time.sleep(max(0.0, dt / max(args.speed, 1e-6) - (time.time() - t)))
+        if rec is not None:
+            rec.frame()
 
     def back_away(distance=0.45, speed=0.15, stall_after=3.0, pulse=0.20, max_pulses=3):
         """Reverse straight out from the furniture the arm just worked at,
@@ -312,6 +378,29 @@ def main():
         if why == "window closed":
             break
 
+    # ------------------------------------------- go somewhere never visited
+    # The tidying legs all end at the console or the basket. This last one
+    # names a bare coordinate in the room furthest from where the robot is
+    # standing and asks it to get there: no waypoint list, no path handed in,
+    # nothing but the goal and whatever the depth camera finds on the way.
+    finale = None
+    if goal is not None and not bot.fallen:
+        here = bot.position[:2].copy()
+        # make_house picks `goal` in the room furthest from the spawn, far
+        # enough that the route has to cross the house and use a doorway.
+        target = np.asarray(goal, float)
+        print(f"\n--- navigate to ({target[0]:.1f}, {target[1]:.1f}), "
+              f"{np.linalg.norm(target - here):.1f} m away, route unknown ---")
+        if rec is not None:
+            rec.still("05_before_the_finale")
+        nav, why = drive_to(target, f"navigate to ({target[0]:.1f}, {target[1]:.1f})",
+                            False, stop=0.40)
+        miss = float(np.linalg.norm(bot.position[:2] - target))
+        finale = (target, miss, why or "arrived")
+        print(f"  {'arrived' if why is None else why}: {miss:.2f} m from the point")
+        if rec is not None:
+            rec.still("06_arrived")
+
     # ------------------------------------------------------------- report
     print("\n" + "=" * 62)
     print(f"{'item':8s} {'stage reached':22s} why")
@@ -327,6 +416,13 @@ def main():
             d = float(np.linalg.norm(body_xy(item) - basket_xy))
             print(f"  {item:8s} ended {d:5.2f} m from the basket"
                   + ("   IN" if d < 0.35 else ""))
+    if finale is not None:
+        target, miss, why = finale
+        print(f"  navigate to ({target[0]:.1f}, {target[1]:.1f}): {why}, "
+              f"{miss:.2f} m from the point" + ("   ARRIVED" if miss < 0.6 else ""))
+    if rec is not None:
+        rec.close()
+        print(f"  recorded {rec.frames} frames -> {rec.dir / 'run.mp4'}")
     if viewer is not None:
         print("\nclose the viewer window to finish")
         while viewer.is_running():

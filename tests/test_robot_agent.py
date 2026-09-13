@@ -119,6 +119,27 @@ def test_nearest_free_spot_names_what_is_in_the_way():
     assert why is None and np.allclose(here, (0.0, 0.0))
 
 
+def test_decoration_is_not_scenery_a_drive_has_to_avoid():
+    """Skirting and rugs are visual-only geoms. home_search.xml's skirting is one
+    body of eleven strips round the whole flat, so merging it into a single
+    footprint walled off all 94 m^2 and every go_to there was refused as "too
+    close to the trim". Whatever else changes, the open floor must stay open."""
+    import mujoco
+    import numpy as np
+
+    from handwrist.surfaces import obstacle_footprints
+
+    model = mujoco.MjModel.from_xml_path(str(resolve_scene("apartment")))
+    data = mujoco.MjData(model)
+    mujoco.mj_forward(model, data)
+    names = {name for name, _, _ in obstacle_footprints(model, data)}
+    assert {"trim", "rug"}.isdisjoint(names), f"decoration is blocking the drive: {names}"
+    assert {"table", "sofa", "bin", "cartons", "wall_n"} <= names, names
+    # the spot the box is picked from, and the middle of each room
+    for point in ((0.8, -1.6), (2.5, 2.0), (8.0, -2.0)):
+        assert blocked_by(np.array(point), obstacle_footprints(model, data)) is None, point
+
+
 def test_lead_in_is_behind_the_parking_spot_on_its_heading():
     import numpy as np
     assert np.allclose(lead_in((2.0, 1.0), 0.0, 0.8), (1.2, 1.0))
