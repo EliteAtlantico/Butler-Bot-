@@ -208,6 +208,19 @@ class RobotRuntime:
         self.adapter.close()
 
 
+def _safe_print(text: str):
+    """Log a line without letting logging break the request being served.
+
+    Every request is logged. Started as `server ... | tee log`, a closed reader made
+    each print raise BrokenPipeError inside the handler, so every request -- the page
+    included -- was dropped with an empty reply (a 502 through tailscale serve).
+    """
+    try:
+        print(text, flush=True)
+    except (OSError, ValueError):
+        pass
+
+
 class RemoteServer(ThreadingHTTPServer):
     daemon_threads = True
     allow_reuse_address = True
@@ -231,9 +244,11 @@ class RemoteHandler(BaseHTTPRequestHandler):
     protocol_version = "HTTP/1.1"
 
     def log_message(self, message, *args):
-        if self.path.startswith("/api/camera"):
+        # A malformed request (a phone speaking TLS to the plain-http port) is logged
+        # before `path` is parsed, and the old `self.path` raised AttributeError there.
+        if getattr(self, "path", "").startswith("/api/camera"):
             return
-        print(f"{self.client_address[0]} - {message % args}")
+        _safe_print(f"{self.client_address[0]} - {message % args}")
 
     def _headers(self, content_type: str, length: int,
                  status: HTTPStatus = HTTPStatus.OK,
@@ -417,9 +432,9 @@ class RemoteHandler(BaseHTTPRequestHandler):
         except RuntimeError as error:
             if "superseded by a newer selection" in str(error):
                 return
-            print(f"Camera stream stopped: {error}")
+            _safe_print(f"Camera stream stopped: {error}")
         except Exception as error:
-            print(f"Camera stream stopped: {error}")
+            _safe_print(f"Camera stream stopped: {error}")
 
     def do_POST(self):
         path = urlparse(self.path).path
