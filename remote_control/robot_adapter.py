@@ -20,7 +20,9 @@ DEFAULT_SCENE = PROJECT_ROOT / "Hand_and_Wrists" / "scenes" / "scene_home.xml"
 USER_CAMERAS = (
     # A third-person view that follows the robot around the room (the model's
     # trackcom `chase` camera): what is going on, not just what the robot sees.
-    {"id": "scene", "label": "Scene View", "model_name": "chase", "rgbd": False},
+    # Shown from above and behind the robot, over the walls: see display_camera().
+    {"id": "scene", "label": "Scene View", "model_name": "chase", "rgbd": False,
+     "follow_from": "head_depth"},
     # Shown with the head depth sensor's downward tilt: see display_camera().
     {"id": "head-left", "label": "Left Head RGB-D",
      "model_name": "head_stereo_left", "rgbd": True, "tilt_from": "head_depth"},
@@ -50,6 +52,9 @@ def display_camera(model, data, camera: dict):
     import mujoco
     import numpy as np
 
+    follow_from = camera.get("follow_from")
+    if follow_from:
+        return _follow_camera(model, data, follow_from)
     tilt_from = camera.get("tilt_from")
     if not tilt_from:
         return camera["model_name"]
@@ -62,6 +67,41 @@ def display_camera(model, data, camera: dict):
     view.lookat[:] = np.asarray(data.cam_xpos[at]) + forward
     view.azimuth = math.degrees(math.atan2(forward[1], forward[0]))
     view.elevation = math.degrees(math.asin(max(-1.0, min(1.0, float(forward[2])))))
+    return view
+
+
+FOLLOW_AHEAD = 1.0         # m in front of the robot the view is centred on
+FOLLOW_DISTANCE = 3.6      # m from that point
+FOLLOW_ELEVATION = -70.0   # deg: the eye is ~4 m up, above 2.4 m house walls
+
+
+def _follow_camera(model, data, facing_camera: str):
+    """A free camera behind the robot, looking down at it along its heading.
+
+    The model's `chase` camera trails 3 m back at 1.6 m high. In the living room
+    that is open floor. In the house (home_search.xml) it sits inside a wall and the
+    scene view was a grey slab. Looking down steeply from above wall height sees
+    into whichever room the robot is in, since the scenes have no ceilings. Centring
+    the view a metre ahead keeps a wall just behind the robot out of the frame. The
+    heading comes from `facing_camera` (the head depth sensor), so it turns with
+    the robot."""
+    import math
+
+    import mujoco
+    import numpy as np
+
+    facing = mujoco.mj_name2id(model, mujoco.mjtObj.mjOBJ_CAMERA, facing_camera)
+    forward = -np.asarray(data.cam_xmat[facing]).reshape(3, 3)[:, 2]
+    chassis = mujoco.mj_name2id(model, mujoco.mjtObj.mjOBJ_BODY, "chassis")
+    root = int(model.body_rootid[chassis]) if chassis >= 0 else 0
+    view = mujoco.MjvCamera()
+    view.type = mujoco.mjtCamera.mjCAMERA_FREE
+    level = np.array([forward[0], forward[1], 0.0])
+    level /= max(float(np.linalg.norm(level)), 1e-9)
+    view.lookat[:] = data.subtree_com[root] + FOLLOW_AHEAD * level
+    view.distance = FOLLOW_DISTANCE
+    view.azimuth = math.degrees(math.atan2(forward[1], forward[0]))
+    view.elevation = FOLLOW_ELEVATION
     return view
 
 
@@ -136,7 +176,7 @@ class SimulationRobotAdapter:
         }
         available = set(self.bot.camera_names)
         missing = [name for camera in USER_CAMERAS
-                   for name in (camera["model_name"], camera.get("tilt_from"))
+                   for name in (camera["model_name"], camera.get("tilt_from"), camera.get("follow_from"))
                    if name and name not in available]
         if missing:
             raise ValueError(f"Scene is missing required robot cameras: {', '.join(missing)}")

@@ -37,14 +37,44 @@ class LiveViewTests(unittest.TestCase):
 
     def test_every_view_uses_cameras_the_robot_model_has(self):
         for camera in USER_CAMERAS:
-            for name in (camera["model_name"], camera.get("tilt_from")):
+            for name in (camera["model_name"], camera.get("tilt_from"), camera.get("follow_from")):
                 if name:
                     self.assertGreaterEqual(self.camera_id(name), 0, name)
         self.assertEqual(USER_CAMERAS[0]["id"], "scene")
 
     def test_views_without_a_tilt_render_their_model_camera(self):
-        self.assertEqual(display_camera(self.model, self.data, view("scene")), "chase")
         self.assertEqual(display_camera(self.model, self.data, view("wrist-left")), "wrist_cam_left")
+
+    def test_the_scene_view_follows_from_above_the_walls_behind_the_robot(self):
+        shown = display_camera(self.model, self.data, view("scene"))
+        self.assertEqual(shown.type, mujoco.mjtCamera.mjCAMERA_FREE)
+        root = self.model.body_rootid[mujoco.mj_name2id(self.model, mujoco.mjtObj.mjOBJ_BODY, "chassis")]
+        azimuth, elevation = math.radians(shown.azimuth), math.radians(shown.elevation)
+        forward = np.array([math.cos(elevation) * math.cos(azimuth),
+                            math.cos(elevation) * math.sin(azimuth), math.sin(elevation)])
+        eye = np.asarray(shown.lookat) - shown.distance * forward
+        self.assertGreater(eye[2], 2.4 + 0.5)              # above the house's 2.4 m walls
+        heading = -self.data.cam_xmat[self.camera_id("head_depth")].reshape(3, 3)[:2, 2]
+        self.assertGreater(float(np.dot(forward[:2], heading)), 0.0)   # looks the way the robot faces
+        ahead = np.asarray(shown.lookat)[:2] - self.data.subtree_com[root][:2]
+        self.assertAlmostEqual(float(np.linalg.norm(ahead)), 1.0, places=6)   # centred just in front
+        self.assertGreater(float(np.dot(ahead, heading)), 0.0)
+
+    def test_in_the_house_the_scene_view_sees_the_room_not_a_wall(self):
+        from pathlib import Path
+
+        house_xml = Path(DEFAULT_SCENE).parents[2] / "comp_vision_sim" / "home_search.xml"
+        house = mujoco.MjModel.from_xml_path(str(house_xml))
+        data = mujoco.MjData(house)
+        mujoco.mj_forward(house, data)
+        with mujoco.Renderer(house, 120, 160) as renderer:
+            renderer.update_scene(data, camera=display_camera(house, data, view("scene")))
+            rgb = renderer.render().astype(np.int16)
+            renderer.update_scene(data, camera="chase")
+            chase = renderer.render().astype(np.int16)
+        # The old chase view in the house was one flat wall; the room has detail.
+        self.assertLess(chase.std(), rgb.std())
+        self.assertGreater(rgb.std(), 25.0)
 
     def test_head_views_look_down_like_the_depth_sensor_from_their_own_position(self):
         depth = -self.data.cam_xmat[self.camera_id("head_depth")].reshape(3, 3)[:, 2]
