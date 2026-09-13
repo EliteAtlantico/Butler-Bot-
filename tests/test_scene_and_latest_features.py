@@ -228,7 +228,10 @@ def test_visual_navigator_scene_configuration_and_fixed_goal():
                                      resolution=.5)
     assert nav.camera == "front" and nav.floor_z == 1
     assert nav.obstacle_ceiling == pytest.approx(1.9)
-    assert nav.robot_radius == pytest.approx(.45) and nav.self_radius == pytest.approx(.65)
+    # The inflation margin is derived from the grid resolution (0.75 of a cell)
+    # rather than a fixed 0.05, so it still covers the grid's own quantisation
+    # if either value is retuned: .4 + .75 * .5 = .775.
+    assert nav.robot_radius == pytest.approx(.775) and nav.self_radius == pytest.approx(.65)
     assert nav.max_range == 6 and nav.grid.origin == (-2., -1.)
     assert nav.grid.size == (20, 12) and np.array_equal(nav.fixed_goal, [7, 2])
 
@@ -260,7 +263,9 @@ def test_visual_navigator_fixed_goal_wins_over_detections(monkeypatch):
 
 def test_replan_off_grid_warns_once_and_eventually_sticks():
     grid = OccupancyGrid.covering((0, 0, 2, 2), resolution=1)
-    nav = navigation.VisualNavigator(grid=grid, verbose=False)
+    # Fixed goal: an off-map coordinate the caller asked for is terminal, with
+    # nothing to re-search. A detected goal would be looked for again instead.
+    nav = navigation.VisualNavigator(grid=grid, verbose=False, goal=(20., 20.))
     nav.goal_xy = np.array([20., 20.])
     bot = SimpleNamespace(position=np.array([.5, .5, 0.]))
     for _ in range(8):

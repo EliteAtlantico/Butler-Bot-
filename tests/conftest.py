@@ -10,8 +10,11 @@ import pytest
 ROOT = Path(__file__).resolve().parents[1]
 MAIN = ROOT / "main_mujoco"
 VISION = ROOT / "comp_vision_sim"
+HANDS = ROOT / "Hand_and_Wrists"
 
-for path in (str(MAIN), str(VISION), str(ROOT)):
+# ROOT carries the packages imported by their directory name (remote_control);
+# the rest are added because their modules import each other unqualified.
+for path in (str(MAIN), str(VISION), str(HANDS), str(ROOT)):
     if path not in sys.path:
         sys.path.insert(0, path)
 

@@ -115,21 +115,28 @@ def test_yolo_init_checks_weights(monkeypatch, tmp_path):
     fake = ModuleType("ultralytics")
     fake.YOLO = lambda _path: None
     monkeypatch.setitem(sys.modules, "ultralytics", fake)
-    with pytest.raises(FileNotFoundError, match="Train them first"):
+    # Weights are now either a path that exists or a pretrained Ultralytics
+    # model name to fetch, so a missing path reports that rather than
+    # suggesting training a net of our own.
+    with pytest.raises(FileNotFoundError, match="no YOLO weights at"):
         YoloDetector(tmp_path / "missing.pt")
 
 
 def test_yolo_init_loads_model_options_and_repr(monkeypatch, tmp_path):
     weights = tmp_path / "model.pt"
     weights.write_bytes(b"x")
-    model = SimpleNamespace(names={0: "target", 1: "pillar"})
+    # `.model` is inspected to tell an open-vocabulary net (YOLO-World) from a
+    # fixed-class one; a plain object is neither, so this takes the fixed path.
+    model = SimpleNamespace(names={0: "target", 1: "pillar"}, model=object())
     fake = ModuleType("ultralytics")
     fake.YOLO = lambda path: model
     monkeypatch.setitem(sys.modules, "ultralytics", fake)
     detector = YoloDetector(weights, conf=.2, iou=.6, imgsz=128, device="cuda")
     assert detector.model is model and detector.names == model.names
     assert (detector.conf, detector.iou, detector.imgsz, detector.device) == (.2, .6, 128, "cuda")
-    assert repr(detector) == "<YoloDetector 2 classes conf=0.2>"
+    # repr now names the weights file, and the target when there is one (a
+    # fixed-class net without an explicit --target has none).
+    assert repr(detector) == "<YoloDetector model.pt 2 classes conf=0.2>"
 
 
 @pytest.mark.integration
@@ -145,6 +152,10 @@ def bare_detector(**kwargs):
     d.max_height = kwargs.get("max_height", 2.5)
     d.min_range = kwargs.get("min_range", .4)
     d.self_radius = kwargs.get("self_radius", .55)
+    # label_for() maps the target class onto the goal label; None means the
+    # model has no designated target and every class keeps its own name.
+    d.target = kwargs.get("target")
+    d.goal_label = kwargs.get("goal_label", "target")
     return d
 
 
@@ -201,7 +212,9 @@ def test_run_parse_args(monkeypatch, argv, algorithm, scene, headless):
 def test_navigation_and_training_parse_defaults(monkeypatch):
     monkeypatch.setattr(sys, "argv", ["run_navigation.py"])
     nav = run_nav.parse_args()
-    assert nav.duration == 90 and nav.detector == "colour" and nav.seed_scan == 1
+    # --detector defaults to None: the detector is chosen from the other
+    # options (a --target implies YOLO, and so on) rather than fixed to colour.
+    assert nav.duration == 90 and nav.detector is None and nav.seed_scan == 1
     monkeypatch.setattr(sys, "argv", ["train_yolo.py"])
     train = train_yolo.parse_args()
     assert train.train_images == 600 and train.val_images == 150
@@ -267,12 +280,20 @@ def test_build_detector_colour_returns_none():
 def test_build_detector_yolo_uses_default_or_explicit_weights(monkeypatch, capsys):
     import vision_sim.yolo_detector as module
     made = []
-    monkeypatch.setattr(module, "YoloDetector",
-                        lambda weights, conf: made.append((weights, conf)) or SimpleNamespace(names={0: "x"}))
-    args = SimpleNamespace(detector="yolo", weights="custom.pt", conf=.7)
+    monkeypatch.setattr(
+        module, "YoloDetector",
+        lambda weights, target=None, classes=None, conf=None:
+        made.append((weights, conf)) or SimpleNamespace(
+            names={0: "x"}, weights=weights, device="cpu", target=target,
+            open_vocab=True))
+    args = SimpleNamespace(detector="yolo", weights="custom.pt", conf=.7,
+                           target="red cylinder", classes=None)
     run_nav.build_detector(args)
     assert made[0] == ("custom.pt", .7)
-    assert "classes=['x']" in capsys.readouterr().out
+    # The summary now names the weights, target and class count instead of
+    # listing the classes outright -- an open vocabulary can be dozens long.
+    out = capsys.readouterr().out
+    assert "custom.pt" in out and "'red cylinder'" in out and "1 classes" in out
 
 
 def test_montage_writes_expected_sheet(tmp_path):

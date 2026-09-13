@@ -1,5 +1,5 @@
-mujoco>=3.2
-numpy>=1.26
-scipy>=1.12
-sympy>=1.12
-
+# The remote control drives the same BracketBot model as everything else, so it
+# takes the same pinned simulation stack rather than a looser range of its own:
+# one source of truth means the phone UI can never be exercised against a MuJoCo
+# or NumPy the robot model and controllers were never tested on.
+-r ../main_mujoco/requirements.txt

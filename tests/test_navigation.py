@@ -79,7 +79,8 @@ def test_sense_runs_pipeline_updates_map_and_best_frame(monkeypatch):
     monkeypatch.setattr(perception, "obstacle_points", lambda _o, **_k: np.array([[1, 2, 3]]))
     monkeypatch.setattr(perception, "floor_points", lambda _o, **_k: np.array([[4, 5, 0]]))
     calls = []
-    detector = lambda frame, robot_yaw: calls.append((frame, robot_yaw)) or dets
+    # `t` is passed so time-gated detectors can pace themselves on sim time.
+    detector = lambda frame, robot_yaw, t=None: calls.append((frame, robot_yaw)) or dets
     grid = FakeGrid()
     bot = Bot(yaw=0.4)
     nav = navigation.VisualNavigator(grid=grid, detector=detector, width=4, height=3)
@@ -108,9 +109,12 @@ def test_sense_smooths_existing_goal(monkeypatch):
     monkeypatch.setattr(perception, "floor_points", lambda _o, **_k: np.empty((0, 3)))
     nav = navigation.VisualNavigator(grid=FakeGrid(),
         detector=lambda *_a, **_k: [detection(pos=(2, 0, .5))])
-    nav.goal_xy = np.array([10.0, 0.0])
+    # Within relocate_distance of the sighting, so the estimate is averaged in.
+    # A sighting further off than that is treated as the goal having moved and
+    # replaces it outright instead of crawling toward the midpoint.
+    nav.goal_xy = np.array([2.5, 0.0])
     nav.sense(Bot(), 0)
-    assert nav.goal_xy == pytest.approx(0.7 * np.array([10, 0]) + 0.3 * np.array([2.2, 0]))
+    assert nav.goal_xy == pytest.approx(0.7 * np.array([2.5, 0]) + 0.3 * np.array([2.2, 0]))
 
 
 def test_sense_does_not_replace_best_frame_with_fewer_detections(monkeypatch):
@@ -140,7 +144,8 @@ def test_replan_success_shortcuts_and_converts_cells(monkeypatch):
     nav = navigation.VisualNavigator(grid=grid, stop_distance=1)
     nav.goal_xy = np.array([8.0, 1.0])
     monkeypatch.setattr(navigation.planning, "astar",
-                        lambda blocked, start, goal, soft: [(1, 1), (3, 1), (7, 1)])
+                        lambda blocked, start, goal, soft, soft_weight=None:
+                        [(1, 1), (3, 1), (7, 1)])
     monkeypatch.setattr(navigation.planning, "shortcut", lambda blocked, cells: cells)
     assert nav.replan(Bot((1, 1)))
     assert len(nav.path) == 2
@@ -156,7 +161,7 @@ def test_replan_frees_area_around_blocked_start(monkeypatch):
     nav.goal_xy = np.array([8.0, 8.0])
     captured = {}
 
-    def astar(blocked, start, goal, soft):
+    def astar(blocked, start, goal, soft, soft_weight=None):
         captured["blocked"] = blocked
         return [tuple(start), tuple(goal)]
 
@@ -176,7 +181,10 @@ def test_replan_fallback_path_when_astar_returns_only_start(monkeypatch):
 
 
 def test_replan_eight_failures_marks_stuck(monkeypatch):
-    nav = navigation.VisualNavigator(grid=FakeGrid())
+    # A fixed goal is a coordinate the caller asked for, so there is nothing to
+    # re-search: running out of plans is terminal. With a detected goal the
+    # navigator looks again instead, which the explore/re-search tests cover.
+    nav = navigation.VisualNavigator(grid=FakeGrid(), goal=(8.0, 8.0))
     nav.goal_xy = np.array([8.0, 8.0])
     monkeypatch.setattr(navigation.planning, "astar", lambda *_a, **_k: None)
     for _ in range(8):
@@ -185,12 +193,16 @@ def test_replan_eight_failures_marks_stuck(monkeypatch):
 
 
 def test_displaced_uses_hysteresis():
+    # Displacement is movement from where the robot settled, not distance to
+    # the goal: a robot stopped at an unreachable goal is not displaced.
     nav = navigation.VisualNavigator(grid=FakeGrid(), stop_distance=1,
                                      re_engage_margin=.75)
     nav.goal_xy = np.array([0.0, 0.0])
+    nav._settle(Bot((1.2, 0)), nav.ARRIVED)
     assert not nav._displaced(Bot((1.8, 0)))
     assert nav._displaced(Bot((2.0, 0)))
-    nav.goal_xy = None
+    # Never settled anywhere, so there is no reference to be displaced from.
+    nav._settled_at = None
     assert not nav._displaced(Bot((99, 99)))
 
 
@@ -278,7 +290,9 @@ def test_navigate_periodic_replan_and_follow(monkeypatch):
 def test_terminal_state_reengages_when_displaced(monkeypatch, terminal):
     nav = navigation.VisualNavigator(grid=FakeGrid(), sense_period=10)
     monkeypatch.setattr(nav, "sense", lambda *_a: None)
-    nav.state = terminal
+    # Settle at the origin so the move to (0, 0) below is measured from
+    # somewhere: displacement is relative to the settle point, not the goal.
+    nav._settle(Bot((5, 5)), terminal)
     nav.goal_xy = np.array([9., 9.])
     monkeypatch.setattr(nav, "replan", lambda _bot: False)
     bot = Bot((0, 0))

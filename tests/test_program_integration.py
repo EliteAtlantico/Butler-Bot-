@@ -193,6 +193,12 @@ class FakeNav:
         self.kwargs = kwargs; self.state = "scan"; self.done = False
         self.obs = None; self.best_time = 0; self.best_detections = []
         self.detections = []; self.goal_xy = None; self.goal_label = "target"
+        # main() interrogates the navigator after the run to report on the
+        # optional LLM stages, so carry what the real one exposes: the detector
+        # (it reports a detector that truncated its reply) and the survey (None
+        # short-circuits the survey/explore reporting this stub does not drive).
+        self.detector = kwargs.get("detector")
+        self.survey = None
 
 
 class FakeNavBot(FakeRunBot):
@@ -203,8 +209,17 @@ class FakeNavBot(FakeRunBot):
         controller.done = True
 
 
+# Captured at import, before any test monkeypatches parse_args away. Starting
+# from the real defaults keeps this in step with the CLI: spelling the fields
+# out by hand meant every new option (--command, --explore, --survey,
+# --classes ...) broke main() here with an AttributeError that said nothing
+# about the actual change.
+NAV_ARG_DEFAULTS = vars(run_nav.parse_args([]))
+
+
 def nav_args(**changes):
-    base = dict(scene="course.xml", duration=.2, viewer=False, speed=100,
+    base = dict(NAV_ARG_DEFAULTS)
+    base.update(scene="course.xml", duration=.2, viewer=False, speed=100,
                 out="result.png", frames=False, seed_scan=.5,
                 detector="colour", weights=None, conf=.35, camera=None,
                 goal=None, animate_movers=0.0)

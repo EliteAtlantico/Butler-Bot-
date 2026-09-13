@@ -184,8 +184,12 @@ class BracketBot:
         out = []
         for j in range(self.model.njnt):
             n = mujoco.mj_id2name(self.model, mujoco.mjtObj.mjOBJ_JOINT, j)
-            if n and self.model.jnt_type[j] in (mujoco.mjtJoint.mjJNT_HINGE,
-                                                mujoco.mjtJoint.mjJNT_SLIDE):
+            # int() matters: `jnt_type[j]` is a numpy scalar, and `x in (...)`
+            # compares with the enum on the left, which refuses numpy operands
+            # and silently yields False for every joint. Without the cast this
+            # returns an empty list and the arm disappears from the inventory.
+            if n and int(self.model.jnt_type[j]) in (mujoco.mjtJoint.mjJNT_HINGE,
+                                                     mujoco.mjtJoint.mjJNT_SLIDE):
                 out.append(n)
         return out
 
