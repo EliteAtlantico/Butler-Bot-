@@ -4,11 +4,19 @@
     ./run_navigation.py                    # headless run, writes vision_nav.png
     ./run_navigation.py --viewer           # watch it in the MuJoCo viewer
     ./run_navigation.py --frames           # also dump per-frame perception PNGs
-    ./run_navigation.py --detector yolo    # use the net from train_yolo.py
+    ./run_navigation.py --detector yolo    # pretrained open-vocabulary YOLO (YOLO-World)
+    ./run_navigation.py --detector yolo --target "potted plant"   # look for anything by name
+    ./run_navigation.py --detector llm     # the local LLM reasons about the scene
+    ./run_navigation.py --detector llm --survey   # 8 labelled photos, one LLM query, then drive
+    ./run_navigation.py --scene search_course.xml --explore   # YOLO searches; the LLM picks waypoints
+    ./run_navigation.py --scene home_search.xml --command "find me a key"   # say what to find
 
 The robot spins once to map the room with its depth camera, finds the red
 column, then A*s a path around the barrier it can see and drives it --
-replanning as the map fills in.
+replanning as the map fills in. With --detector llm the "finding" is done by
+the local vision model, which looks at the head-camera frame, reasons about
+where the goal stands, and its answer is ranged with the depth image before
+the planner converts it into a route to drive.
 """
 from __future__ import annotations
 
@@ -19,6 +27,7 @@ import time
 from pathlib import Path
 
 HERE = Path(__file__).resolve().parent
+YOLO_DEFAULT_WEIGHTS = "yolov8l-worldv2.pt"   # == vision_sim.yolo_detector.DEFAULT_WEIGHTS
 # The robot model and its BracketBot wrapper live next door; this package
 # deliberately does not depend on them, so only the entry points bridge over.
 sys.path.insert(0, str(HERE))
@@ -44,7 +53,7 @@ def scene_has_truth(scene_path) -> bool:
     return "obstacle_course" in str(scene_path)
 
 
-def parse_args():
+def parse_args(argv=None):
     p = argparse.ArgumentParser(description=__doc__,
                                 formatter_class=argparse.RawDescriptionHelpFormatter)
     p.add_argument("--scene", default=str(HERE / "obstacle_course.xml"))
@@ -56,12 +65,13 @@ def parse_args():
                    help="also write rgbd_frame_XX.png every few seconds")
     p.add_argument("--seed-scan", type=float, default=1.0,
                    help="turns to spin while mapping before planning")
-    p.add_argument("--detector", default="colour",
-                   choices=["colour", "yolo", "geometric"],
-                   help="colour thresholding, a YOLO net trained by "
-                        "train_yolo.py, or 'geometric' -- colour-free "
-                        "clustering that needs no palette and so works in an "
-                        "unfamiliar scene")
+    p.add_argument("--detector", default=None,
+                   choices=["colour", "yolo", "geometric", "llm"],
+                   help="colour thresholding, a pretrained open-vocabulary "
+                        "YOLO that finds --target by name, 'geometric' -- colour-free clustering "
+                        "that needs no palette and so works in an unfamiliar "
+                        "scene -- or 'llm', the local LLM (llama-server) scene "
+                        "reasoner")
     p.add_argument("--goal", default=None, metavar="X,Y",
                    help="drive to this world coordinate instead of looking for "
                         "a coloured target; needs no detector palette")
@@ -71,31 +81,175 @@ def parse_args():
                    help="shuttle every mocap body in the scene across the route "
                         "at this speed, to exercise moving obstacles")
     p.add_argument("--weights", default=None,
-                   help="YOLO weights (default: runs/bracketbot_yolo/weights/best.pt)")
-    p.add_argument("--conf", type=float, default=0.35, help="YOLO confidence")
-    return p.parse_args()
+                   help="YOLO weights: a pretrained Ultralytics model name, fetched "
+                        "into weights/ on first use, or a path such as the net "
+                        "train_yolo.py writes (default: %s)" % YOLO_DEFAULT_WEIGHTS)
+    p.add_argument("--target", default=None, metavar="NAME",
+                   help="the object to find, named in plain words (\"mug\", "
+                        "\"potted plant\"); the YOLO detector and the explore LLM "
+                        "both look for it (default: the red cylinder)")
+    p.add_argument("--classes", default=None, metavar="A,B,...",
+                   help="comma-separated vocabulary the open-vocabulary YOLO "
+                        "detects besides --target (default: common household objects)")
+    p.add_argument("--conf", type=float, default=0.25, help="YOLO confidence")
+    p.add_argument("--llm-url", default="http://localhost:8080/v1",
+                   help="OpenAI-compatible base URL of the local LLM server")
+    p.add_argument("--llm-model", default="Qwen/Qwen3.8-27B",
+                   help="model name as served (default: the running llama-server)")
+    p.add_argument("--llm-period", type=float, default=3.0,
+                   help="sim seconds between LLM scene queries")
+    p.add_argument("--llm-conf", type=float, default=0.40,
+                   help="min goal confidence to accept a reasoned location")
+    p.add_argument("--llm-max-tokens", type=int, default=2048,
+                   help="completion token cap per LLM query (1024 truncated "
+                        "answers on the 27B model)")
+    p.add_argument("--survey", action="store_true",
+                   help="instead of spinning, photograph N directions and ask the "
+                        "local LLM once -- every photo labelled with the robot's "
+                        "position and heading -- which way the goal is")
+    p.add_argument("--survey-shots", type=int, default=8,
+                   help="photos in the survey, evenly spaced around the robot")
+    p.add_argument("--survey-max-tokens", type=int, default=6144,
+                   help="completion token cap for the survey query; it reasons "
+                        "across all photos and 1024 ran out before any answer")
+    p.add_argument("--survey-conf", type=float, default=0.40,
+                   help="min confidence to accept the survey's answer")
+    p.add_argument("--llm-thinking", action="store_true",
+                   help="let the model reason before answering: ~4x slower "
+                        "(single frame 17 s vs 5 s, survey 31 s vs 6 s)")
+    p.add_argument("--track", choices=["detector", "depth"], default=None,
+                   help="how the goal is confirmed once found: 'detector' asks "
+                        "the detector every frame; 'depth' just checks the depth "
+                        "image still shows something there (no per-frame LLM "
+                        "queries). Default: depth with --survey, else detector")
+    p.add_argument("--lost-after", type=float, default=4.0,
+                   help="sim seconds without seeing a goal that should be in "
+                        "view before searching for it again")
+    p.add_argument("--max-researches", type=int, default=3,
+                   help="how many times to re-run the search before giving up")
+    p.add_argument("--explore", action="store_true",
+                   help="search for the object: survey, let the detector (YOLO by "
+                        "default) check every photo, and if it sees nothing ask "
+                        "the local LLM where to go next; drive there and repeat "
+                        "until the detector finds the object, then go to it. "
+                        "Takes precedence over --survey")
+    p.add_argument("--max-explore-steps", type=int, default=None,
+                   help="places to explore before giving up (default 8, or 6 with --command)")
+    p.add_argument("--command", nargs="?", const="", default=None, metavar="TEXT",
+                   help="say what to find in plain words, e.g. \"find me a key\" (no text: "
+                        "asks). The local LLM works out the object and where it is usually "
+                        "kept, then the robot searches those places with --explore, and hands "
+                        "over (remote control, not merged yet) if it cannot find it")
+    p.add_argument("--explore-step", type=float, default=3.5,
+                   help="farthest a single exploration waypoint may be (m)")
+    args = p.parse_args(argv)
+    if args.command is not None:
+        args.explore = True           # a spoken request is a search
+    return args
+
+
+def resolve_detector(args) -> str:
+    """--explore searches with the pretrained YOLO unless told otherwise."""
+    return args.detector or ("yolo" if getattr(args, "explore", False) else "colour")
 
 
 def build_detector(args, info=None):
-    if args.detector == "colour":
+    name = resolve_detector(args)
+    if name == "colour":
         return None
-    if args.detector == "geometric":
+    if name == "geometric":
         from vision_sim.perception import GeometricDetector
         det = GeometricDetector(
             floor_z=info.floor_z if info else 0.0,
             self_radius=(info.robot_radius + 0.25) if info else 0.55)
         print("detector: geometric (colour-free clustering)")
         return det
-    from vision_sim.yolo_detector import YoloDetector
-    # A fresh training run wins over the checked-in net, so retraining takes
-    # effect without passing --weights; models/ is the fallback that makes a
-    # clean clone work at all.
-    trained = HERE / "runs" / "bracketbot_yolo" / "weights" / "best.pt"
-    shipped = HERE / "models" / "bracketbot_yolo.pt"
-    weights = args.weights or (trained if trained.exists() else shipped)
-    det = YoloDetector(weights, conf=args.conf)
-    print(f"detector: YOLO {weights} classes={list(det.names.values())}")
+    if name == "yolo":
+        from vision_sim.yolo_detector import YoloDetector
+        classes = ([c.strip() for c in args.classes.split(",") if c.strip()]
+                   if args.classes else None)
+        det = YoloDetector(args.weights or YOLO_DEFAULT_WEIGHTS, target=args.target,
+                           classes=classes, conf=args.conf)
+        names = list(det.names.values())
+        print(f"detector: YOLO {det.weights} on {det.device}, target={det.target!r}, "
+              f"{len(names)} classes{' (open vocabulary)' if det.open_vocab else ''}")
+        return det
+    from vision_sim.llm_reasoner import LlmGoalDetector
+    det = LlmGoalDetector(base_url=args.llm_url, model=args.llm_model,
+                          query_period=args.llm_period,
+                          min_confidence=args.llm_conf,
+                          max_tokens=args.llm_max_tokens, verbose=True,
+                          thinking=args.llm_thinking)
+    print(f"detector: local LLM {args.llm_url} model={args.llm_model} "
+          f"query every {args.llm_period:g} sim s")
     return det
+
+
+def resolve_track(args) -> str:
+    """How a found goal is confirmed. A survey already ranged the goal with the
+    LLM, so confirming it from depth alone avoids a model query every few
+    seconds; without a survey the detector is the only thing that finds it."""
+    return args.track or ("depth" if (args.survey or getattr(args, "explore", False))
+                          else "detector")
+
+
+def resolve_rounds(args) -> int:
+    """How many places to search: a few for a spoken request, then hand over."""
+    if args.max_explore_steps is not None:
+        return args.max_explore_steps
+    return 6 if args.command is not None else 8
+
+
+def build_command(args, ask=input):
+    """Parse --command into a SearchTask; it also sets --target unless given."""
+    if args.command is None:
+        return None
+    from vision_sim.llm_command import CommandInterpreter
+    text = args.command or ask("What should I find? ")
+    task = CommandInterpreter(base_url=args.llm_url, model=args.llm_model,
+                              thinking=args.llm_thinking, verbose=True).parse(text)
+    print(f"command: \"{task.command}\" -> {task.summary()}")
+    print(f"robot: {task.reply}")
+    if task.ok and args.target is None:
+        args.target = task.target
+    return task
+
+
+def hand_off_to_remote_control(nav, reason, task=None):
+    """Where the dev-remote-control branch takes over once it is merged."""
+    what = task.description if task is not None and task.ok else "the goal"
+    print(f"\nsearch over: could not find {what} ({reason}).")
+    print("hand-off: this is where remote control would take over so a person can "
+          "drive; dev-remote-control is not merged yet, so the robot stops here.")
+
+
+def build_explorer(args):
+    if not getattr(args, "explore", False):
+        return None
+    from vision_sim.llm_explore import LlmExplorer
+    task = getattr(args, "task", None)
+    explorer = LlmExplorer(base_url=args.llm_url, model=args.llm_model,
+                           n_shots=args.survey_shots, min_confidence=args.survey_conf,
+                           max_tokens=args.survey_max_tokens, thinking=args.llm_thinking,
+                           max_step=args.explore_step, verbose=True,
+                           target=(task.description if task is not None and task.ok
+                                   else args.target or "a tall RED cylinder"),
+                           task=task)
+    print(f"explore: {args.survey_shots}-photo surveys; the LLM picks waypoints, "
+          f"at most {resolve_rounds(args)}")
+    return explorer
+
+
+def build_survey(args):
+    if not args.survey:
+        return None
+    from vision_sim.llm_survey import LlmSurvey
+    survey = LlmSurvey(base_url=args.llm_url, model=args.llm_model,
+                       n_shots=args.survey_shots, min_confidence=args.survey_conf,
+                       max_tokens=args.survey_max_tokens, verbose=True,
+                       thinking=args.llm_thinking)
+    print(f"survey: {args.survey_shots} photos, one query to {args.llm_url}")
+    return survey
 
 
 def annotate(rgb, detections, scale=3):
@@ -267,6 +421,13 @@ def main():
 
     from vision_sim.scene import SceneInfo
 
+    # A spoken request is understood before the sim starts: nothing to find
+    # means nothing to do.
+    args.task = build_command(args)
+    if args.task is not None and not args.task.ok:
+        print("nothing to search for; not starting")
+        return
+
     bot = BracketBot(xml=args.scene)
     bot.balance.enable(bot.state)
 
@@ -276,7 +437,15 @@ def main():
         goal = [float(v) for v in args.goal.replace(" ", "").split(",")[:2]]
     nav = VisualNavigator.for_bot(bot, goal=goal, camera=args.camera,
                                   scan_turns=args.seed_scan, verbose=True,
-                                  detector=build_detector(args, info))
+                                  detector=build_detector(args, info),
+                                  survey=build_survey(args),
+                                  explorer=build_explorer(args),
+                                  max_explore_steps=resolve_rounds(args),
+                                  on_give_up=lambda nav, why: hand_off_to_remote_control(
+                                      nav, why, args.task),
+                                  track=resolve_track(args),
+                                  lost_after=args.lost_after,
+                                  max_researches=args.max_researches)
     print("cameras:", ", ".join(bot.camera_names))
     print(info.describe())
     print(f"scene: {args.scene}")
@@ -350,6 +519,28 @@ def main():
     if truth:
         for d, err in score_detections(nav.best_detections):
             print(f"  {d}  position error {err:.2f} m")
+    if hasattr(nav.detector, "truncated"):
+        det = nav.detector
+        print(f"llm: {det.queries} queries, {det.errors} errors, "
+              f"{det.truncated} truncated answers")
+    if nav.survey is not None:
+        r = nav.survey_result
+        print(f"survey: {len(nav.survey_shots)} photos, {nav.survey!r}")
+        if r is not None and r.found:
+            print(f"  answer: photo {r.photo} px {r.pixel} heading "
+                  f"{np.degrees(r.heading):.0f} deg via {r.heading_source}, "
+                  f"{r.latency:.1f}s, {r.completion_tokens} tokens")
+        elif r is not None:
+            print(f"  answer: not found ({r.error or r.reason})")
+    if getattr(nav, "researches", 0):
+        print(f"re-searched {nav.researches} time(s) after losing the goal")
+    if getattr(nav, "explorer", None) is not None:
+        places = ", ".join(f"({p[0]:.1f}, {p[1]:.1f})" for p in nav.explored) or "none"
+        print(f"explore: {nav.explore_steps} LLM waypoint query(ies); surveyed from {places}; "
+              f"{nav.explorer!r}")
+
+    if args.task is not None:
+        print(f"command \"{args.task.command}\": {nav.outcome or nav.state}")
 
     if nav.obs is not None:
         figure(bot, nav, track, args.out, elapsed, truth=truth)
