@@ -11,8 +11,8 @@ One text-only query to the local LLM turns the request into a SearchTask:
 The navigator then runs the explore loop (`llm_explore.py`) with the task: at
 every stop the LLM checks the survey photos for the object and picks the most
 likely place it has not checked yet as the next waypoint, while YOLO watches
-every frame on the way. After a few rounds without it the search gives up --
-the point where the remote-control branch will take over once it is merged.
+every frame on the way. After a few rounds without it the search gives up and
+`run_navigation.py` hands the robot to the phone remote (Seam D).
 
 Small things like keys are beyond the pretrained YOLO on these renders (best
 confidence 0.17 even at 640 px), but the vision LLM boxes them from 3 m away,

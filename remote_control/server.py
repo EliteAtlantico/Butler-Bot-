@@ -274,16 +274,24 @@ def parse_args():
     return parser.parse_args()
 
 
-def main():
-    args = parse_args()
-    adapter = SimulationRobotAdapter(args.scene)
-    runtime = RobotRuntime(adapter, watchdog_seconds=args.watchdog_ms / 1000.0)
-    server = RemoteServer((args.host, args.port), runtime)
+def serve(adapter: SimulationRobotAdapter, host: str = "0.0.0.0", port: int = 8000,
+          *, watchdog_seconds: float = 0.35, on_ready=None):
+    """Serve the remote for `adapter` until Ctrl+C (or `server.shutdown()`).
+
+    `on_ready(server)` is called once the socket is bound, before serving; it
+    is how a caller that is not a terminal learns the real port (port 0) and
+    gets a handle to stop the server from another thread.
+    """
+    runtime = RobotRuntime(adapter, watchdog_seconds=watchdog_seconds)
+    server = RemoteServer((host, port), runtime)
+    port = server.server_address[1]
     runtime.start()
     print("BracketBot Remote is ready")
-    print(f"Computer: http://127.0.0.1:{args.port}")
-    print(f"Phone:    http://{local_ip()}:{args.port}")
+    print(f"Computer: http://127.0.0.1:{port}")
+    print(f"Phone:    http://{local_ip()}:{port}")
     print("Press Ctrl+C to stop the server and robot.")
+    if on_ready is not None:
+        on_ready(server)
     try:
         server.serve_forever(poll_interval=0.2)
     except KeyboardInterrupt:
@@ -292,6 +300,12 @@ def main():
         server.shutdown()
         server.server_close()
         runtime.close()
+
+
+def main():
+    args = parse_args()
+    adapter = SimulationRobotAdapter(args.scene)
+    serve(adapter, args.host, args.port, watchdog_seconds=args.watchdog_ms / 1000.0)
 
 
 if __name__ == "__main__":
