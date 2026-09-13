@@ -44,7 +44,9 @@ If it is not visible anywhere, choose WHERE TO GO NEXT to find it: {where_next} 
 not explored. Do not choose walls, dead ends, or floor right next to the robot.
 
 Answer with ONLY a single-line compact JSON object -- no prose, no markdown fences. Keys, in this order:
-{{"goal_found": true/false, "goal_photo": <photo index or null>, "goal_bbox_2d": [x1, y1, x2, y2] or null, "explore_photo": <photo index or null>, "explore_bbox_2d": [x1, y1, x2, y2] or null, "confidence": <0.0-1.0>, "reason": "<one short sentence>"}}
+{{"goal_found": true/false, "goal_photo": <photo index or null>, "goal_bbox_2d": [x1, y1, x2, y2] or null, \
+"explore_photo": <photo index or null>, "explore_bbox_2d": [x1, y1, x2, y2] or null, \
+"confidence": <0.0-1.0>, "reason": "<one short sentence>"}}
 Boxes are in THAT photo, with coordinates normalised to 0-1000 across the photo's width (x) and height (y).
 explore_bbox_2d covers the opening or patch of floor to drive toward. Null the goal fields when goal_found is false,
 and the explore fields when it is true."""
@@ -295,9 +297,10 @@ class LlmExplorer:
                 where = f"at ({d.position[0]:.2f}, {d.position[1]:.2f})" if d is not None else "unranged"
                 print(f"    [explore] goal in photo {res.goal.photo} {where}: {res.reason}")
             elif res.waypoint is not None:
+                photo = (f" (photo {res.explore_photo} px {res.explore_pixel})"
+                         if res.explore_photo is not None else "")
                 print(f"    [explore] next waypoint ({res.waypoint[0]:.2f}, {res.waypoint[1]:.2f}) "
-                      f"via {res.waypoint_source}"
-                      f"{f' (photo {res.explore_photo} px {res.explore_pixel})' if res.explore_photo is not None else ''}"
+                      f"via {res.waypoint_source}{photo}"
                       f": {res.reason} {'; '.join(res.notes)}")
             else:
                 print(f"    [explore] nowhere to go: {res.error or ''} {'; '.join(res.notes)}")

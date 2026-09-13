@@ -60,7 +60,9 @@ robot's own white arms if they enter a frame.
 Compare all the photos. If the goal appears in more than one, choose the photo where it is closest to
 the horizontal centre. Answer with ONLY a single-line compact JSON object -- no prose, no markdown
 fences, nothing after the closing brace. Keys, in this order:
-{{"goal_found": true/false, "photo": <photo index or null>, "bbox_2d": [x1, y1, x2, y2] or null, "heading_deg": <world heading from the robot toward the goal, or null>, "confidence": <0.0-1.0>, "reason": "<one short sentence>"}}
+{{"goal_found": true/false, "photo": <photo index or null>, "bbox_2d": [x1, y1, x2, y2] or null, \
+"heading_deg": <world heading from the robot toward the goal, or null>, \
+"confidence": <0.0-1.0>, "reason": "<one short sentence>"}}
 bbox_2d is the goal's bounding box in THAT photo, with coordinates normalised to 0-1000 across the photo's
 width (x) and height (y). If you are not confident the goal is in any photo, set goal_found=false and
 null photo, bbox_2d and heading_deg."""

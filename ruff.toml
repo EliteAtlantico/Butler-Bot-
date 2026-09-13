@@ -1,0 +1,9 @@
+# Phase 7 lint: line length only, to start. This tree was merged from four
+# branches; mass-reformatting it would bury every contributor's history in
+# `git blame` across the merge commits. Widen `select` deliberately, one rule
+# at a time, with the fixes in their own commit.
+line-length = 120
+target-version = "py311"
+
+[lint]
+select = ["E501"]

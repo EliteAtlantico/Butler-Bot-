@@ -55,7 +55,8 @@ Everything else in view -- walls, floor, furniture, obstacles, the sky -- is sce
 robot's own white arms if they enter the frame.
 
 Answer with ONLY a single-line compact JSON object -- no prose, no markdown fences. Keys, in this order:
-{{"goal_found": true/false, "bbox_2d": [x1, y1, x2, y2] or null, "goal_confidence": <0.0-1.0>, "movement": "<at most eight words: how to reach the goal>"}}
+{{"goal_found": true/false, "bbox_2d": [x1, y1, x2, y2] or null, "goal_confidence": <0.0-1.0>, \
+"movement": "<at most eight words: how to reach the goal>"}}
 bbox_2d is the goal's bounding box with coordinates normalised to 0-1000 across the image width (x) and
 height (y). If you are not confident the goal is present, set goal_found=false and bbox_2d=null."""
 
