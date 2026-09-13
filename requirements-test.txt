@@ -3,3 +3,7 @@ pytest==9.1.1
 pytest-cov==7.1.0
 matplotlib==3.11.2
 ultralytics==8.4.150
+# YOLO-World's text encoder. ultralytics normally auto-installs it on first use,
+# but the tests set YOLO_AUTOINSTALL=false, so without this a fresh machine fails
+# every YOLO test with "No module named 'clip'". Not on PyPI; pinned by commit.
+clip @ git+https://github.com/ultralytics/CLIP.git@a13192f8cb767260d7dfd98c843b0716593169e7
