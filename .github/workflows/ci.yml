@@ -78,7 +78,10 @@ jobs:
           cache-dependency-path: main_mujoco/requirements.txt
       # No ultralytics: neither smoke case uses YOLO (give-up stubs the LLM and
       # detector; the pick drives to a coordinate) and the evals do not either.
-      - run: pip install -r main_mujoco/requirements.txt matplotlib==3.11.2
+      # requests: vision_sim.llm_reasoner.LLMClient refuses to construct without
+      # it, even with the LLM stubbed. No requirements file lists it yet; the
+      # test job only gets it through ultralytics.
+      - run: pip install -r main_mujoco/requirements.txt matplotlib==3.11.2 requests==2.34.2
       - name: Smoke -- give up -> phone remote (Seam D), drive -> pick the keys (Seam C)
         run: python ci/smoke_pipeline.py
       - name: eval_pick vs results/pick_eval.json
