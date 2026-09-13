@@ -214,6 +214,10 @@ class VisualNavigator:
         self._cmd = (0.0, 0.0)
         self._plan_failures = 0
         self._off_grid_warned = False
+        # How far the robot may carve free space around itself to escape a
+        # pocket it is already standing in. Big enough to leave an arm's
+        # parking spot; small enough that it cannot tunnel through a wall.
+        self.escape_limit = 0.60
         self._settled_at = None
         self.range_ahead = np.inf
 
@@ -357,11 +361,30 @@ class VisualNavigator:
                 return False
 
         if blocked[tuple(start)]:
-            # The robot is inside its own inflation (hugging a wall). Free the
-            # cells it physically occupies, or no plan can ever start.
+            # The robot is inside its own inflation -- hugging a wall, shoved,
+            # or parked there deliberately by the arm, which stops at reach
+            # distance from the furniture it is working on and thinks nothing
+            # of it. Whatever put it there, it is already standing in the
+            # pocket, so it must be allowed to drive out of one.
+            #
+            # A fixed 5x5 patch was not enough: after a pick the robot sits
+            # 0.10 m from a console face against a 0.28 m inflation, and the
+            # nearest free cell is 0.20 m away, so every later plan failed
+            # from the very first cell and the robot never moved again. Grow
+            # the escape hatch until it actually reaches open space.
             blocked = blocked.copy()
             sx, sy = start
-            blocked[max(sx - 2, 0):sx + 3, max(sy - 2, 0):sy + 3] = False
+            nx, ny = blocked.shape
+            # Never smaller than the old +/-2 cells, however coarse the grid.
+            limit = max(2, int(self.escape_limit / self.grid.resolution))
+            for r in range(2, limit + 1):
+                x0, x1 = max(sx - r, 0), min(sx + r + 1, nx)
+                y0, y1 = max(sy - r, 0), min(sy + r + 1, ny)
+                if (~blocked[x0:x1, y0:y1]).any():
+                    blocked[x0:x1, y0:y1] = False
+                    break
+            else:
+                blocked[max(sx - limit, 0):sx + limit + 1, max(sy - limit, 0):sy + limit + 1] = False
 
         # Weight the clearance cost heavily: given a choice the route should
         # run down the middle of open space rather than shave past furniture,
