@@ -101,6 +101,35 @@ The LLM search on `feature/llm-scene-reasoning` stops the robot 1.0 m from
 what it found. That is inside the head camera's blind zone for floor items;
 `Pick` handles it by backing up until it can see the item again.
 
+## Any object, any scene
+
+The chores above know seven items by colour and four places by name. The same
+skills also take objects and places they have never seen, which is how the LLM
+agent (`../robot_agent`) drives them:
+
+```python
+from handwrist.detection import DetectionEstimator
+from handwrist.objects import ObjectSpec
+from handwrist.skills import Pick
+from handwrist.place import Place
+from handwrist.surfaces import find_surfaces, obstacle_boxes
+
+see = DetectionEstimator()                                   # YOLO-World, else the vision LLM
+pick = Pick(bot, ObjectSpec("tv remote", "", aligned=True, shape="box"), estimator=see)
+...
+shelf = {s.name: s for s in find_surfaces(bot.model, bot.data)}["sideboard"]
+place = Place(bot, pick, shelf.spec(obstacles=obstacle_boxes(bot.model, bot.data, "sideboard")))
+```
+
+| File | What it adds |
+|---|---|
+| `handwrist/detection.py` | `DetectionEstimator`: an open-vocabulary box (YOLO-World when confident, the vision LLM otherwise) plus depth, measured with `CameraEstimator`'s geometry. 12/14 items found from benchmark viewpoints, centre error median 3 mm. |
+| `handwrist/surfaces.py` | `find_surfaces`: every uncovered upward-facing top at arm height, and containers, read from the scene. Reproduces `PLACES` exactly in the living room. |
+
+`Pick` accepts an `ObjectSpec` as well as a catalogue name, and `Place` /
+`PlacePlanner` accept a `PlaceSpec` carrying its own surface, obstacles and an
+optional spot, as well as a `PLACES` name. Existing calls are unchanged.
+
 ## How it works
 
 ```

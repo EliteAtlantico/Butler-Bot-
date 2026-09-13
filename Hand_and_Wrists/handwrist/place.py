@@ -24,7 +24,7 @@ import numpy as np
 
 from bracketbot_sim.kinematics import rot_z
 
-from .places import PLACES, PlacePlanner
+from .places import PlacePlanner, resolve_place
 from .skills import DESCEND_SPEED, ApproachPose, ArmSkill
 
 
@@ -35,16 +35,14 @@ class Place(ArmSkill):
     BACKUP = 0.45     # m: clears the mast and the stowed hand's swing
 
     def __init__(self, bot, holding, where, verbose=True):
-        if where not in PLACES:
-            raise KeyError(f"unknown place {where!r}; know {sorted(PLACES)}")
+        spec = resolve_place(where)      # a PLACES name, or a PlaceSpec found at run time
         if not holding.succeeded:
             raise ValueError("nothing to place: the pick did not succeed")
-        spec = PLACES[where]
         item = holding.spec.name
         super().__init__(bot, holding.arms, holding.grippers,
-                         f"put the {item} {spec.preposition} the {where}",
+                         f"put the {item} {spec.preposition} the {spec.name}",
                          holding.control_period, verbose)
-        self.item, self.where = item, where
+        self.item, self.where, self.place_spec = item, spec.name, spec
         self.side = holding.plan.side
         self.kind = holding.plan.kind
         self.rel_mat = rot_z(-holding.plan.base_yaw) @ holding.plan.grasp_mat
@@ -88,7 +86,7 @@ class Place(ArmSkill):
 
     def _plan(self, bot, t, dt):
         self.arm.hold()
-        targets = self.planner.plan(self.where, self.side, self.rel_mat,
+        targets = self.planner.plan(self.place_spec, self.side, self.rel_mat,
                                     self.grip_above_bottom, self.kind)
         if not targets:
             self._fail(f"can't reach the {self.where}", t)
@@ -175,8 +173,8 @@ class Place(ArmSkill):
             self.arm.set_gripper(1.0)            # stuck to a pad: open fully
         if (self._elapsed(t) > 0.6 and self.gripper.pinched_body() < 0) \
                 or self._elapsed(t) > 3.0:
-            if PLACES[self.where].mode == "drop":
-                PlacePlanner.dropped(bot, self.where)
+            if self.place_spec.mode == "drop":
+                PlacePlanner.dropped(bot, self.place_spec)
             self._retreat_to = self.arm.grasp_pose[0] + np.array([0.0, 0.0, 0.12])
             self._enter("retreat", t, f"let go of the {self.item}")
 
@@ -190,7 +188,7 @@ class Place(ArmSkill):
         bot.drive(0.0, 0.0)
         if self._arms_home(dt):
             self._manipulating(False)
-            prep = PLACES[self.where].preposition
+            prep = self.place_spec.preposition
             self._enter("done", t, f"the {self.item} is {prep} the {self.where}"
                         if prep != "to" else f"handed the {self.item} over")
 

@@ -28,7 +28,7 @@ from bracketbot_sim.manipulation import ArmController
 
 from .grasping import GraspPlanner
 from .gripper import Gripper
-from .objects import CATALOGUE, truth_estimate
+from .objects import CATALOGUE, ObjectSpec, truth_estimate
 
 STOW_FWD = 0.22      # carry the item this far ahead of the base...
 STOW_Z = 0.72        # ...at this height, where every wrist yaw is reachable
@@ -558,12 +558,18 @@ class Pick(ArmSkill):
 
     def __init__(self, bot, name, estimator=truth_estimator, sides=("right", "left"),
                  max_retries=2, control_period=0.02, verbose=True):
-        if name not in CATALOGUE:
+        # A CATALOGUE name, or an ObjectSpec for anything else: how to hold an
+        # object the catalogue has never heard of, chosen by the caller.
+        if isinstance(name, ObjectSpec):
+            spec = name
+        elif name in CATALOGUE:
+            spec = CATALOGUE[name]
+        else:
             raise KeyError(f"unknown object {name!r}; know {sorted(CATALOGUE)}")
         super().__init__(bot, {s: ArmController(bot, s) for s in ("right", "left")},
                          {s: Gripper(bot, s) for s in ("right", "left")},
-                         f"pick up the {name}", control_period, verbose)
-        self.spec = CATALOGUE[name]
+                         f"pick up the {spec.name}", control_period, verbose)
+        self.spec = spec
         self.estimator = estimator
         self.sides = sides
         self.planner = GraspPlanner(bot)
