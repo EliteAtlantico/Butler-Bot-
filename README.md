@@ -1,13 +1,13 @@
 # ButlerBot
 
 **Your own voice-activated, AI-powered home assistant.** Tell ButlerBot what you
-want — "bring me the TV remote", "put the mug in the basket" — and it works out
+want ("bring me the TV remote", "put the mug in the basket") and it works out
 where to look, drives there without hitting anything, recognises the object,
 picks it up and delivers it. From your phone you can watch through its cameras,
 give it spoken or typed commands, and take over with a joystick at any moment.
 
-ButlerBot runs on the BracketBot — a self-balancing, two-wheeled robot with two
-arms — here in a full MuJoCo physics
+ButlerBot runs on the BracketBot, a self-balancing, two-wheeled robot with two
+arms. Here it runs in a full MuJoCo physics
 simulation of the real hardware, down to the wheels, motors and fingertip pads.
 Everything runs on your own computer: the language model, speech recognition and
 vision are all local.
@@ -39,10 +39,10 @@ remote is hidden behind a divider.
  voice / text ─► robot_agent (local LLM, tool calls) ──┐
  phone app ────► remote_control (web server) ──────────┤
                                                        ▼
-            comp_vision_sim  ─ search, navigation, perception, YOLO-World
-            Hand_and_Wrists  ─ grasp planning, pick, place, chores
-            main_mujoco      ─ the BracketBot model, balance controller, cameras, arm IK
-            integration      ─ the seams: navigator → arm (pick), give-up → phone
+            comp_vision_sim:  search, navigation, perception, YOLO-World
+            Hand_and_Wrists:  grasp planning, pick, place, chores
+            main_mujoco:      the BracketBot model, balance controller, cameras, arm IK
+            integration:      the seams: navigator → arm (pick), give-up → phone
 ```
 
 | Folder | What's in it |
