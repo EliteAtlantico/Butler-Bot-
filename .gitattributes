@@ -1,0 +1,47 @@
+# Line-ending policy for the merged BracketBot tree.
+#
+# Goal: stop line-ending churn on Linux/Windows checkouts and future merges,
+# while preserving the exact bytes of files that are historically CRLF.
+# See plan.md 3.8 / risk register. Strategy chosen: PRESERVE EXACTLY.
+
+# Text files default to LF in the working tree and repo.
+*.py    text eol=lf
+*.md    text eol=lf
+*.txt   text eol=lf
+*.rst   text eol=lf
+*.xml   text eol=lf
+*.json  text eol=lf
+*.yml   text eol=lf
+*.yaml  text eol=lf
+*.toml  text eol=lf
+*.cfg   text eol=lf
+*.ini   text eol=lf
+*.js    text eol=lf
+*.css   text eol=lf
+*.html  text eol=lf
+*.sh    text eol=lf
+
+# Exceptions: these Python sources are historically CRLF and must check out
+# CRLF in the working tree on every platform. `text eol=crlf` keeps the
+# working-tree bytes CRLF while storing an LF-normalized blob in the repo, so
+# git still does proper 3-way textual merges on them (they are co-edited across
+# branches) and future merges stay cheap. No functional change for tools/devs.
+comp_vision_sim/run_navigation.py           text eol=crlf
+comp_vision_sim/train_yolo.py               text eol=crlf
+comp_vision_sim/stress_test.py              text eol=crlf
+comp_vision_sim/vision_sim/navigation.py    text eol=crlf
+comp_vision_sim/vision_sim/occupancy.py     text eol=crlf
+comp_vision_sim/vision_sim/planning.py      text eol=crlf
+comp_vision_sim/vision_sim/yolo_dataset.py  text eol=crlf
+
+# Binary assets: never convert or textually diff/merge.
+*.stl   binary
+*.pt    binary
+*.pth   binary
+*.png   binary
+*.jpg   binary
+*.jpeg  binary
+*.gif   binary
+*.npy   binary
+*.npz   binary
+*.onnx  binary
