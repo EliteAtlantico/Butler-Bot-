@@ -25,3 +25,7 @@ tour_*.png
 .coverage
 htmlcov/
 .pytest_cache/
+
+# Generated sample houses; tools/make_house.py is the source of truth
+random_house.xml
+house_*.xml
