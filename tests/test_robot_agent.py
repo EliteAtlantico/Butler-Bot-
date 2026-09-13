@@ -556,10 +556,12 @@ def test_another_scene_finds_its_own_surfaces_and_picks_there():
         assert picked["ok"], picked
         assert picked["phases"][-1] == "done"
         # This test used to carry the box from the dining-room floor through the
-        # doorway into the bin. The box is out of the simulation, and none of the
-        # remaining items makes that trip: the ball rolls out of the fingers on
-        # the drive, the bottle beside the table leaves no reachable pre-grasp,
-        # and the can cannot be put in the bin from the coffee table. The
-        # place-through-a-doorway leg goes with the box.
+        # doorway into the bin. The box is out of the simulation. Tried in its
+        # place, before the back-away-before-turning fix was merged: the ball
+        # rolled out of the fingers on the drive, the bottle beside the table
+        # left no reachable pre-grasp, and the can could not reach the bin from
+        # the coffee table. robot_agent/README.md reports the ball makes the trip
+        # since that fix -- restore the place-through-a-doorway leg with the ball
+        # once it is seen to pass here.
     finally:
         robot.close()
