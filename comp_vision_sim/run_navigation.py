@@ -508,6 +508,34 @@ def main():
                 f"rgbd_frame_{frame_no:02d}.png")
             frame_no += 1
 
+    # Seam C: on arrival the arm skills take over. `Pick` is a controller in
+    # the same f(bot, t) shape as the navigator, so handing over is a matter of
+    # stepping a different one -- which is what lets the viewer show the pick
+    # instead of running it after the window has closed.
+    pick_outcome = None
+    pick_ctrl = None
+    pick_target = None
+
+    def want_pick():
+        return bool(args.pick) and nav.state == nav.ARRIVED and not bot.fallen
+
+    def start_pick():
+        nonlocal pick_ctrl, pick_target
+        from integration.pick_adapter import make_pick, resolve_object
+        what = (args.task.description or args.task.target) if args.task else args.target
+        what = what or nav.goal_label
+        name = resolve_object(what)
+        if name is None:
+            from handwrist.objects import CATALOGUE
+            print(f"pick skipped: {what!r} is not something the arm knows how "
+                  f"to hold (it knows: {', '.join(sorted(CATALOGUE))})")
+            return False
+        pick_target, pick_ctrl = what, make_pick(bot, name,
+                                                 use_camera=not args.pick_truth)
+        print(f"pick: {what!r} -> {name!r}, "
+              f"{'head camera' if not args.pick_truth else 'scene truth'} estimator")
+        return True
+
     if args.viewer:
         import mujoco.viewer
         with mujoco.viewer.launch_passive(bot.model, bot.data) as viewer:
@@ -518,7 +546,9 @@ def main():
             while viewer.is_running() and bot.time < args.duration \
                     and not bot.fallen:
                 drive_movers()
-                bot.step(0.05, controller=nav)
+                if pick_ctrl is None and want_pick() and not start_pick():
+                    args.pick = False          # nothing to reach for; keep driving
+                bot.step(0.05, controller=pick_ctrl or nav)
                 tick()
                 viewer.sync()
                 lag = bot.time / max(args.speed, 1e-6) - (time.time() - start)
@@ -529,21 +559,24 @@ def main():
             drive_movers()
             bot.step(0.1, controller=nav)
             tick()
-
-    # Seam C: the navigator stopped at its stand-off, so hand the object over
-    # to the arm skills. Only on a real arrival -- giving up, falling over or
-    # running out of clock are not places to start reaching for something.
-    pick_outcome = None
-    if args.pick:
-        if nav.state == nav.ARRIVED and not bot.fallen:
+        if want_pick():
             from integration.pick_adapter import pick_after_arrival
             what = (args.task.description or args.task.target) if args.task else args.target
             pick_outcome = pick_after_arrival(bot, what or nav.goal_label,
                                               use_camera=not args.pick_truth,
                                               timeout=args.pick_timeout)
-        else:
+        elif args.pick:
             print(f"\npick skipped: navigator finished in state {nav.state!r}, "
                   f"not {nav.ARRIVED!r}")
+
+    if pick_ctrl is not None:
+        from integration.pick_adapter import PickOutcome
+        pick_outcome = PickOutcome(
+            attempted=True, target=pick_target, object_name=pick_ctrl.spec.name,
+            succeeded=bool(pick_ctrl.succeeded),
+            failure=pick_ctrl.failure or (None if pick_ctrl.succeeded else
+                                          f"still in {pick_ctrl.phase} when the window closed"),
+            phase=pick_ctrl.phase)
 
     elapsed = time.time() - wall
     track = np.array(track)
