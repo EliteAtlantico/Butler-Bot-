@@ -45,7 +45,7 @@ def _wrap(a):
     return (a + np.pi) % (2 * np.pi) - np.pi
 
 
-SURVEY_PROMPT = """You are the visual cortex of a balancing two-wheeled robot on an indoor obstacle course.
+SURVEY_PROMPT = """You are the visual cortex of a balancing two-wheeled robot exploring an indoor space.
 The robot stood still and turned in place, taking {n} photos, one per heading. Each photo below is
 preceded by its own label: the robot's WORLD position (x, y in metres), the WORLD heading that photo
 faces, its angle from photo 0, and the world headings seen along its left and right edges. Headings are
@@ -53,8 +53,8 @@ in degrees, 0 = +x axis, counter-clockwise positive, so 90 = +y. Every photo is 
 {height} px tall (horizontal_px: 0 = left edge; vertical_px: 0 = top edge). Within a photo, things to
 the LEFT of centre are at a LARGER world heading than the camera's, things to the RIGHT at a smaller one.
 
-GOAL: a tall RED cylinder standing on the floor.
-OTHERS: orange barriers (low walls), blue pillars, a grey checkerboard floor, a hazy sky. Ignore the
+GOAL: {target}.
+Everything else in view -- walls, floor, furniture, obstacles, the sky -- is scenery. Ignore the
 robot's own white arms if they enter a frame.
 
 Compare all the photos. If the goal appears in more than one, choose the photo where it is closest to
@@ -62,8 +62,12 @@ the horizontal centre. Answer with ONLY a single-line compact JSON object -- no 
 fences, nothing after the closing brace. Keys, in this order:
 {{"goal_found": true/false, "photo": <photo index or null>, "bbox_2d": [x1, y1, x2, y2] or null, "heading_deg": <world heading from the robot toward the goal, or null>, "confidence": <0.0-1.0>, "reason": "<one short sentence>"}}
 bbox_2d is the goal's bounding box in THAT photo, with coordinates normalised to 0-1000 across the photo's
-width (x) and height (y). If you are not confident the red goal is in any photo, set goal_found=false and
+width (x) and height (y). If you are not confident the goal is in any photo, set goal_found=false and
 null photo, bbox_2d and heading_deg."""
+
+# Same default as LlmExplorer.target, so an obstacle-course caller that passes
+# nothing gets exactly the prompt it got before this was parameterised.
+DEFAULT_TARGET = "a tall RED cylinder standing on the floor"
 
 
 @dataclass
@@ -132,11 +136,13 @@ class LlmSurvey:
                  n_shots: int = 8, goal_label: str = "target",
                  min_confidence: float = 0.40, max_tokens: int = 6144,
                  temperature: float = 0.1, timeout: float = 300.0,
-                 verbose: bool = False, thinking: bool = False):
+                 verbose: bool = False, thinking: bool = False,
+                 target: str = DEFAULT_TARGET):
         if n_shots < 1:
             raise ValueError("a survey needs at least one shot")
         self.n_shots = int(n_shots)
         self.goal_label = goal_label
+        self.target = target            # what to look for, as the prompt names it
         self.min_confidence = min_confidence
         self.verbose = verbose
         self.client = LLMClient(base_url, model, max_tokens, temperature, timeout, verbose,
@@ -144,7 +150,7 @@ class LlmSurvey:
         # Reuse the single-frame detector's pixel -> world ranging verbatim, so
         # a survey hit and a live-frame hit are converted identically.
         self._ranger = LlmGoalDetector(base_url, model, goal_label=goal_label,
-                                       min_confidence=0.0)
+                                       min_confidence=0.0, target=target)
         self.queries = 0
         self.errors = 0
         self.truncated = 0
@@ -158,7 +164,8 @@ class LlmSurvey:
 
     def prompt(self, shots: list[SurveyShot]) -> str:
         intr = shots[0].obs.intrinsics
-        return SURVEY_PROMPT.format(n=len(shots), width=intr.width, height=intr.height)
+        return SURVEY_PROMPT.format(n=len(shots), width=intr.width, height=intr.height,
+                                    target=self.target)
 
     # --------------------------------------------------------------- query
     def query(self, shots: list[SurveyShot]) -> SurveyResult:

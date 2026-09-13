@@ -47,17 +47,21 @@ DEFAULT_MODEL = "Qwen/Qwen3.8-27B"
 
 
 # --------------------------------------------------------------------------- prompt
-PROMPT_TEMPLATE = """You are the visual cortex of a balancing two-wheeled robot on an indoor obstacle course.
+PROMPT_TEMPLATE = """You are the visual cortex of a balancing two-wheeled robot moving through an indoor space.
 You see ONE frame from its head-mounted camera. The image is {width} px wide and {height} px tall.
 
-GOAL: a tall RED cylinder standing on the floor. That is the one object you must locate precisely.
-OTHERS: orange barriers (low walls), blue pillars, a grey checkerboard floor, a hazy sky. Ignore the
+GOAL: {target}. That is the one object you must locate precisely.
+Everything else in view -- walls, floor, furniture, obstacles, the sky -- is scenery. Ignore the
 robot's own white arms if they enter the frame.
 
 Answer with ONLY a single-line compact JSON object -- no prose, no markdown fences. Keys, in this order:
 {{"goal_found": true/false, "bbox_2d": [x1, y1, x2, y2] or null, "goal_confidence": <0.0-1.0>, "movement": "<at most eight words: how to reach the goal>"}}
 bbox_2d is the goal's bounding box with coordinates normalised to 0-1000 across the image width (x) and
-height (y). If you are not confident the red goal is present, set goal_found=false and bbox_2d=null."""
+height (y). If you are not confident the goal is present, set goal_found=false and bbox_2d=null."""
+
+# Same default as LlmExplorer.target: a caller that passes nothing gets exactly
+# the prompt it got before this was parameterised.
+DEFAULT_TARGET = "a tall RED cylinder standing on the floor"
 
 
 def _extract_json(text: str):
@@ -260,10 +264,11 @@ class LlmGoalDetector:
                  self_radius: float = 0.55, ground_z: float = 0.0,
                  max_tokens: int = 2048, temperature: float = 0.1,
                  timeout: float = 120.0, verbose: bool = False,
-                 thinking: bool = False):
+                 thinking: bool = False, target: str = DEFAULT_TARGET):
         self.client = LLMClient(base_url, model, max_tokens, temperature, timeout, verbose,
                                 thinking=thinking)
         self.goal_label = goal_label
+        self.target = target            # what to look for, as the prompt names it
         self.query_period = max(0.5, float(query_period))
         self.min_confidence = min_confidence
         self.patch_radius = patch_radius
@@ -317,7 +322,8 @@ class LlmGoalDetector:
         self._last_query = t if t is not None else time.monotonic()
 
         prompt = PROMPT_TEMPLATE.format(width=obs.intrinsics.width,
-                                        height=obs.intrinsics.height)
+                                        height=obs.intrinsics.height,
+                                        target=self.target)
         det = None
         try:
             content, dt = self.client.ask_image(obs.rgb, prompt)

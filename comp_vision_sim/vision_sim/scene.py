@@ -62,16 +62,17 @@ class SceneInfo:
     @classmethod
     def from_model(cls, model, data, camera: str | None = None,
                    margin: float = 2.0, max_map_range: float = 8.0):
-        robot = _robot_geoms(model)
+        root = _robot_root(model)
+        robot = _robot_geoms(model, root)
         static = ~robot
 
         floor_z = _floor_height(model, data, static)
-        radius, top = _robot_extent(model, data, robot, floor_z)
+        radius, top = _robot_extent(model, data, robot, floor_z, root)
         bounds = _scenery_bounds(model, data, static, floor_z)
 
         # The grid has to hold the robot as well as the scenery, or the very
         # first to_cell() falls outside it.
-        rx, ry = float(data.xpos[_robot_root(model)][0]), float(data.xpos[_robot_root(model)][1])
+        rx, ry = float(data.xpos[root][0]), float(data.xpos[root][1])
         x0 = min(bounds[0], rx) - margin
         y0 = min(bounds[1], ry) - margin
         x1 = max(bounds[2], rx) + margin
@@ -103,16 +104,33 @@ def pick_camera(model, prefer=("depth", "rgbd", "head", "front")) -> str:
 
 
 def _robot_root(model) -> int:
-    """The body at the top of the articulated tree, or the world body."""
+    """The body at the top of the articulated tree, or the world body.
+
+    Chosen by subtree size rather than document order. A scene containing
+    pickable objects has many free bodies -- each is its own root of a
+    one-body tree -- and the robot is simply the largest of them. Taking the
+    first moving body instead makes the answer depend on whether an item
+    happens to be declared before the robot.
+    """
     moving = np.where(model.body_weldid != 0)[0]
     if not len(moving):
         return 0
-    return int(model.body_rootid[moving[0]])
+    roots, counts = np.unique(model.body_rootid[moving], return_counts=True)
+    return int(roots[int(np.argmax(counts))])
 
 
-def _robot_geoms(model) -> np.ndarray:
-    """Boolean mask over geoms: True where the geom belongs to a robot."""
-    return model.body_weldid[model.geom_bodyid] != 0
+def _robot_geoms(model, root: int | None = None) -> np.ndarray:
+    """Boolean mask over geoms: True where the geom belongs to the robot.
+
+    Membership is "in the robot's kinematic tree", not merely "not welded to
+    the world". A free-floating mug is not welded to the world either, and
+    counting it as a robot part measured the footprint radius of the furnished
+    demo scene at 8.36 m instead of 0.25 -- which blocks every cell in the
+    costmap and leaves the planner nowhere legal to go.
+    """
+    if root is None:
+        root = _robot_root(model)
+    return model.body_rootid[model.geom_bodyid] == root
 
 
 def _floor_height(model, data, static: np.ndarray) -> float:
@@ -125,12 +143,15 @@ def _floor_height(model, data, static: np.ndarray) -> float:
     return float((data.geom_xpos[ids][:, 2] - model.geom_rbound[ids]).min())
 
 
-def _robot_extent(model, data, robot: np.ndarray, floor_z: float):
+def _robot_extent(model, data, robot: np.ndarray, floor_z: float,
+                  root_body: int | None = None):
     """Planar footprint radius and height of the robot, from its own geoms."""
     ids = np.where(robot)[0]
     if not len(ids):
         return 0.3, 1.0
-    root = data.xpos[_robot_root(model)][:2]
+    if root_body is None:
+        root_body = _robot_root(model)
+    root = data.xpos[root_body][:2]
     half = np.array([_geom_halfextent(model, data, g) for g in ids])
     d = np.linalg.norm(data.geom_xpos[ids][:, :2] - root, axis=1) + half[:, :2].max(1)
     top = float((data.geom_xpos[ids][:, 2] + half[:, 2]).max() - floor_z)

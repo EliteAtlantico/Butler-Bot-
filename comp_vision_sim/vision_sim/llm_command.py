@@ -29,13 +29,13 @@ from dataclasses import dataclass, field
 
 from .llm_reasoner import DEFAULT_BASE_URL, DEFAULT_MODEL, LLMClient, _extract_json
 
-COMMAND_PROMPT = """You control a home robot that can drive around and look with its cameras. It cannot pick anything up yet.
+COMMAND_PROMPT = """You control a home robot that can drive around, look with its cameras, and pick up small objects it can reach.
 The user said: "{command}"
 
-Work out what the user wants the robot to find or go to, and where that thing is usually found in a home.
+Work out what the user wants the robot to find, go to, or fetch, and where that thing is usually found in a home.
 Answer with ONLY a single-line compact JSON object -- no prose, no markdown fences. Keys, in this order:
 {{"target": "<short name an object detector understands, e.g. keys, mug, remote control, sofa>", "description": "<the thing with an article, e.g. a set of keys>", "likely_places": ["<furniture or spot where it is usually found, most likely first, 3 to 6 of them>"], "reply": "<one short friendly sentence the robot says back>"}}
-If the request is not about finding or going to something, set target to null and say so in reply."""
+If the request is not about finding, going to or fetching something, set target to null and say so in reply."""
 
 # Words around the object in a spoken request. Stripped from the front of the
 # sentence, repeatedly, by the no-model fallback.

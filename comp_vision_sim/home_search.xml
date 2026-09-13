@@ -1,10 +1,19 @@
 <mujoco model="home_search">
-  <!-- apartment.xml plus a set of keys, for natural-language search ("find my keys").
+  <!-- The end-to-end demo scene: explorable rooms AND pickable objects.
+
+       apartment.xml plus a set of keys, for natural-language search ("find my
+       keys"), plus scene_home.xml's pickable items so the same scene carries
+       the command -> explore -> navigate -> pick pipeline to the end. Before
+       this, no single scene had both: home_search.xml had rooms and nothing
+       to grasp, scene_home.xml had objects and no rooms to explore.
+
+       scene_home.xml's `person` body is deliberately NOT carried over -- it
+       exists for hand-over, and this integration exposes Pick only.
 
        The keys lie on the sideboard in the living room: behind the divider,
        invisible from the start in room A, in a place people really leave
        keys. Room A offers plausible decoys (dining table, bookshelf) with
-       nothing on them, so a search that only follows "where keys usually are"
+       little on them, so a search that only follows "where keys usually are"
        still has to look and move on.
 
        Below: the original apartment notes.
@@ -26,6 +35,12 @@
        hue-window detector has no easy handle here: use --detector geometric. -->
   <include file="../main_mujoco/chopped_dynamic.xml"/>
   <compiler meshdir="../main_mujoco/meshes/"/>
+  <!-- From scene_home.xml, and load-bearing for grasping: MuJoCo's soft
+       friction lets a squeezed item creep down through the fingers at about
+       0.5 mm/s, which slides flat items out of the grip on any carry longer
+       than ~30 s. Without this the pick half of the demo fails silently after
+       the robot has already picked the object up. -->
+  <option noslip_iterations="5"/>
 
   <statistic center="5 0 1.0" extent="7.0"/>
 
@@ -55,7 +70,28 @@
     <material name="brass"   rgba="0.80 0.66 0.30 1" specular="0.6" shininess="0.6"/>
     <material name="steel"   rgba="0.75 0.76 0.78 1" specular="0.7" shininess="0.7"/>
     <material name="leather" rgba="0.55 0.12 0.10 1"/>
+    <!-- pickable-item colours, carried over from scene_home.xml unchanged -->
+    <material name="mug"    rgba="0.85 0.18 0.18 1"/>
+    <material name="can"    rgba="0.15 0.70 0.25 1"/>
+    <material name="bottle" rgba="0.92 0.80 0.10 1"/>
+    <material name="remote" rgba="0.50 0.20 0.75 1"/>
+    <material name="keyring" rgba="0.95 0.50 0.10 1"/>
+    <material name="ball"   rgba="0.95 0.30 0.65 1"/>
+    <material name="box"    rgba="0.10 0.65 0.70 1"/>
   </asset>
+
+  <!-- Every pickable object is a free body whose name matches a class in
+       Hand_and_Wrists/handwrist/objects.py, and whose graspable geom carries
+       the name that class expects (mug_body, keys_body, ...). Items have
+       higher contact priority than the finger pads so the pads' friction
+       governs the grasp. Copied from scene_home.xml rather than re-authored:
+       the grasp tuning and the committed pick_eval baselines depend on these
+       exact sizes. -->
+  <default>
+    <default class="item">
+      <geom condim="4" friction="1.0 0.01 0.001" solref="0.005 1" priority="1"/>
+    </default>
+  </default>
 
   <worldbody>
     <light pos="2 0 2.6" dir="0 0 -1" directional="false" diffuse="0.45 0.45 0.42"/>
@@ -153,15 +189,54 @@
       <geom type="box" pos="0 0 0.42" size="0.85 0.24 0.42" material="darkwood"/>
       <geom type="box" pos="0 -0.26 0.58" size="0.30 0.02 0.16" material="wood"/>
     </body>
-    <!-- the keys, on the sideboard (top at z 0.84): a steel ring, two keys and a
-         leather fob, real size (each key ~6 cm) -->
+    <!-- ============ pickable items ============
+         The search target stays where it was: on the living-room sideboard
+         (top z 0.84), behind the divider and out of sight from the start.
+         The geometry is scene_home.xml's pickable keys rather than the
+         decorative set that stood here before -- handwrist's CATALOGUE grasps
+         the geom named `keys_body`, and the decorative version had no such
+         geom and no freejoint, so the arm could never have picked it up. -->
     <body name="keys" pos="9.35 -3.18 0.842" euler="0 0 0.5">
-      <geom name="keys_ring" type="cylinder" pos="0 0 0.002" size="0.016 0.002" material="steel"/>
-      <geom name="keys_a_bow" type="cylinder" pos="0.030 0.004 0.003" size="0.012 0.0025" material="brass"/>
-      <geom name="keys_a_blade" type="box" pos="0.062 0.004 0.003" size="0.022 0.005 0.0015" material="brass"/>
-      <geom name="keys_b_bow" type="cylinder" pos="-0.012 0.028 0.003" size="0.012 0.0025" material="steel"/>
-      <geom name="keys_b_blade" type="box" pos="-0.028 0.056 0.003" size="0.005 0.022 0.0015" material="steel"/>
-      <geom name="keys_fob" type="box" pos="-0.030 -0.020 0.005" size="0.022 0.014 0.004" material="leather"/>
+      <freejoint name="keys_free"/>
+      <geom name="keys_body" class="item" type="box" pos="0 0 0.012" size="0.035 0.018 0.012"
+            material="keyring"/>
+      <geom name="keys_ring" class="item" type="cylinder" pos="0.05 0 0.004" size="0.015 0.004"
+            material="steel"/>
+    </body>
+
+    <!-- on the living-room coffee table (top z 0.41) -->
+    <body name="mug" pos="8.20 0.52 0.41">
+      <freejoint name="mug_free"/>
+      <geom name="mug_body" class="item" type="cylinder" pos="0 0 0.05" size="0.04 0.05" material="mug"/>
+      <geom name="mug_handle" class="item" type="box" pos="0 0.05 0.05" size="0.008 0.012 0.03" material="mug"/>
+    </body>
+    <body name="can" pos="8.48 0.30 0.41">
+      <freejoint name="can_free"/>
+      <geom name="can_body" class="item" type="cylinder" pos="0 0 0.06" size="0.033 0.06" material="can"/>
+    </body>
+    <body name="remote" pos="8.66 0.55 0.41" euler="0 0 0.6">
+      <freejoint name="remote_free"/>
+      <geom name="remote_body" class="item" type="box" pos="0 0 0.0125" size="0.09 0.024 0.0125"
+            material="remote"/>
+    </body>
+
+    <!-- on the dining table in room A (top z 0.76), so room A is not a dead end -->
+    <body name="bottle" pos="2.30 -1.45 0.76">
+      <freejoint name="bottle_free"/>
+      <geom name="bottle_body" class="item" type="cylinder" pos="0 0 0.09" size="0.035 0.09" material="bottle"/>
+      <geom name="bottle_neck" class="item" type="cylinder" pos="0 0 0.20" size="0.016 0.02" material="bottle"/>
+    </body>
+
+    <!-- on the floor, clear of the doorway corridor and both rooms' traffic.
+         Both sit below the 0.10 m obstacle floor, so neither enters the
+         occupancy grid as an obstacle. -->
+    <body name="ball" pos="0.50 3.20 0">
+      <freejoint name="ball_free"/>
+      <geom name="ball_body" class="item" type="sphere" pos="0 0 0.035" size="0.035" material="ball"/>
+    </body>
+    <body name="box" pos="0.80 -3.20 0" euler="0 0 0.3">
+      <freejoint name="box_free"/>
+      <geom name="box_body" class="item" type="box" pos="0 0 0.025" size="0.06 0.025 0.025" material="box"/>
     </body>
   </worldbody>
 </mujoco>

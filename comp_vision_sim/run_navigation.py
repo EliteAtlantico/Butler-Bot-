@@ -179,7 +179,7 @@ def build_detector(args, info=None):
                           query_period=args.llm_period,
                           min_confidence=args.llm_conf,
                           max_tokens=args.llm_max_tokens, verbose=True,
-                          thinking=args.llm_thinking)
+                          thinking=args.llm_thinking, target=prompt_target(args))
     print(f"detector: local LLM {args.llm_url} model={args.llm_model} "
           f"query every {args.llm_period:g} sim s")
     return det
@@ -223,6 +223,20 @@ def hand_off_to_remote_control(nav, reason, task=None):
           "drive; dev-remote-control is not merged yet, so the robot stops here.")
 
 
+def prompt_target(args) -> str:
+    """How the LLM prompts should name the thing they are looking for.
+
+    One source for all three consumers -- explorer, survey and the per-frame
+    detector -- so a run cannot end up searching for the spoken target while a
+    prompt still describes the obstacle course's red cylinder.
+    """
+    from vision_sim.llm_reasoner import DEFAULT_TARGET
+    task = getattr(args, "task", None)
+    if task is not None and task.ok and task.description:
+        return task.description
+    return args.target or DEFAULT_TARGET
+
+
 def build_explorer(args):
     if not getattr(args, "explore", False):
         return None
@@ -232,8 +246,7 @@ def build_explorer(args):
                            n_shots=args.survey_shots, min_confidence=args.survey_conf,
                            max_tokens=args.survey_max_tokens, thinking=args.llm_thinking,
                            max_step=args.explore_step, verbose=True,
-                           target=(task.description if task is not None and task.ok
-                                   else args.target or "a tall RED cylinder"),
+                           target=prompt_target(args),
                            task=task)
     print(f"explore: {args.survey_shots}-photo surveys; the LLM picks waypoints, "
           f"at most {resolve_rounds(args)}")
@@ -247,7 +260,7 @@ def build_survey(args):
     survey = LlmSurvey(base_url=args.llm_url, model=args.llm_model,
                        n_shots=args.survey_shots, min_confidence=args.survey_conf,
                        max_tokens=args.survey_max_tokens, verbose=True,
-                       thinking=args.llm_thinking)
+                       thinking=args.llm_thinking, target=prompt_target(args))
     print(f"survey: {args.survey_shots} photos, one query to {args.llm_url}")
     return survey
 
