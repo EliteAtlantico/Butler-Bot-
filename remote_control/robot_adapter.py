@@ -38,8 +38,31 @@ class SimulationRobotAdapter:
         from bracketbot_sim.robot import BracketBot
 
         self._mujoco = mujoco
+        self._setup(BracketBot(xml=Path(scene).resolve()), owns_bot=True)
+
+    @classmethod
+    def attach(cls, bot) -> "SimulationRobotAdapter":
+        """Drive a BracketBot that is already running, instead of building one.
+
+        For handing a live robot over mid-run: the operator then drives the
+        robot that was already in the scene, not a fresh one at the origin.
+        The caller keeps ownership, so close() stops the robot but leaves its
+        GL contexts for the caller to release. MUJOCO_GL is left alone -- it
+        was chosen when the bot was built.
+        """
+        import mujoco
+
+        self = cls.__new__(cls)
+        self._mujoco = mujoco
+        self._setup(bot, owns_bot=False)
+        return self
+
+    def _setup(self, bot, owns_bot: bool):
         self._lock = threading.RLock()
-        self.bot = BracketBot(xml=Path(scene).resolve())
+        self.bot = bot
+        self._owns_bot = owns_bot
+        # Seeds the balance references from where the robot stands now, so an
+        # attached robot holds its current spot rather than a stale reference.
         self.bot.balance.enable(self.bot.state)
         self._joints = self._discover_joints()
         self._gripper_joints = {
@@ -141,7 +164,10 @@ class SimulationRobotAdapter:
     def close(self):
         with self._lock:
             self.bot.drive(0.0, 0.0)
-            self.bot.close()
+            # An attached bot belongs to whoever built it; closing its GL
+            # contexts here as well is a double teardown.
+            if self._owns_bot:
+                self.bot.close()
 
 
 def _rgb_to_bmp(rgb) -> bytes:

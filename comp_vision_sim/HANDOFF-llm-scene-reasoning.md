@@ -74,9 +74,10 @@ controls its lifecycle.
 4. **Give up after a few rounds** (6 with `--command`; `--max-explore-steps`):
    state STUCK, `nav.outcome == "gave_up"`, and
    `on_give_up(nav, reason)` is called exactly once. `run_navigation.py` wires it to
-   `hand_off_to_remote_control()`, which only prints for now — the place to
-   start `dev-remote-control` once it is merged. The same hook fires when the
-   re-search cap is hit.
+   `hand_off_to_remote_control()`, which says what was not found; once the loop
+   exits, `main()` serves the phone remote for the same robot
+   (`integration/remote_adapter.py`) until Ctrl+C, unless `--no-remote`. The
+   same hook fires when the re-search cap is hit.
 
 Why the LLM has to look too: the pretrained YOLO cannot see keys on these
 renders (best confidence 0.17 at 640 px, 0.09 on zoomed tiles, across "keys",
@@ -333,7 +334,8 @@ script, legacy pixel answers) also passes.
 2. **Picking the object up** is left for the manipulation branch; the robot
    stops at the stand-off distance (1.0 m) from the object.
    **Remote control after a failed search** is `on_give_up` →
-   `hand_off_to_remote_control()` in `run_navigation.py`, a print for now.
+   `hand_off_to_remote_control()` in `run_navigation.py`, then
+   `integration.remote_adapter.hand_off()` after the loop (Seam D).
 3. **The no-LLM fallback is not doorway-aware:** it picks the longest open run
    plus novelty, so without the model the search wanders the first room before
    finding the doorway. The LLM is what makes the search efficient.

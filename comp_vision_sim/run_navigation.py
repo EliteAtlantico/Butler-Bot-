@@ -92,6 +92,11 @@ def parse_args(argv=None):
                         "an arm failure apart from a perception one")
     p.add_argument("--pick-timeout", type=float, default=90.0, metavar="SEC",
                    help="sim seconds to allow for the pick (default 90)")
+    p.add_argument("--no-remote", action="store_true",
+                   help="if the search gives up, just stop, instead of serving "
+                        "the phone remote for the same robot until Ctrl+C")
+    p.add_argument("--remote-port", type=int, default=8000,
+                   help="port for the phone remote after a give-up (default 8000)")
     p.add_argument("--weights", default=None,
                    help="YOLO weights: a pretrained Ultralytics model name, fetched "
                         "into weights/ on first use, or a path such as the net "
@@ -228,11 +233,15 @@ def build_command(args, ask=input):
 
 
 def hand_off_to_remote_control(nav, reason, task=None):
-    """Where the dev-remote-control branch takes over once it is merged."""
+    """The navigator's on_give_up: say what could not be found.
+
+    The hand-off itself happens in main() once the loop has exited
+    (integration.remote_adapter). This fires inside bot.step(), and the
+    remote server has to be the only thing stepping the robot.
+    """
     what = task.description if task is not None and task.ok else "the goal"
     print(f"\nsearch over: could not find {what} ({reason}).")
-    print("hand-off: this is where remote control would take over so a person can "
-          "drive; dev-remote-control is not merged yet, so the robot stops here.")
+    print("hand-off: stopping here so a person can take over by remote control.")
 
 
 def prompt_target(args) -> str:
@@ -619,6 +628,16 @@ def main():
 
     if nav.obs is not None:
         figure(bot, nav, track, args.out, elapsed, truth=truth)
+
+    # Seam D: a search that gave up hands this same robot to the phone remote.
+    # Here, not in on_give_up: that fires inside bot.step(), and the server's
+    # control thread must be the only thing stepping the physics.
+    if getattr(nav, "give_up_reason", None) is not None:
+        if args.no_remote:
+            print("remote control not started (--no-remote)")
+        else:
+            from integration.remote_adapter import hand_off
+            hand_off(bot, port=args.remote_port)
     bot.close()
 
 
