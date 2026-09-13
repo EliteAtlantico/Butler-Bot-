@@ -82,6 +82,33 @@ def test_gpu_decode_failure_retries_on_cpu(whisper):
     assert [m.device for m in whisper.created] == ["cuda", "cpu"]
 
 
+def test_cpu_retry_rereads_a_file_like_recording_from_the_start(monkeypatch):
+    """The phone remote posts audio as bytes; a GPU attempt that read them and then
+    failed once left the CPU retry an empty file to decode."""
+    from io import BytesIO
+    heard = []
+
+    class ReadingModel:
+        def __init__(self, name, device="auto", compute_type="default"):
+            self.device = device
+
+        def transcribe(self, audio, **kwargs):
+            heard.append((self.device, audio.read()))
+
+            def segments():
+                if self.device != "cpu":
+                    raise RuntimeError("Library libcublas.so.12 is not found or cannot be loaded")
+                yield SimpleNamespace(text="pick up the mug")
+            return segments(), None
+
+    module = ModuleType("faster_whisper")
+    module.WhisperModel = ReadingModel
+    monkeypatch.setitem(sys.modules, "faster_whisper", module)
+    recording = b"RIFF" + b"\x01" * 400
+    assert speech.SpeechToText(device="auto").transcribe(BytesIO(recording)) == "pick up the mug"
+    assert heard == [("auto", recording), ("cpu", recording)]
+
+
 def test_cpu_failure_is_not_hidden(whisper):
     whisper.fail_decode_on = {"cpu"}
     with pytest.raises(RuntimeError):

@@ -48,7 +48,8 @@ let driveRequestActive = false;
 let armSide = "left";
 let capabilitiesLoaded = false;
 let cameras = new Map();
-let selectedCamera = "head-left";
+let selectedCamera = "scene";
+let secureUrl = null;   // the remote's HTTPS address, when the server knows one
 let cameraMode = "rgb";
 let cameraLoopGeneration = 0;
 let cameraAbortController = null;
@@ -59,13 +60,9 @@ let clientDroppedFrames = 0;
 let cameraFallbackTimer = null;
 let nativeCameraActive = false;
 let lastStatusAt = 0;
-let recognition = null;
 let speechActive = false;
 let speechStarting = false;
 let speechPointer = null;
-let stopSpeechWhenStarted = false;
-let pendingTranscript = "";
-let speechFailed = false;
 
 cameraContext.imageSmoothingEnabled = true;
 cameraContext.imageSmoothingQuality = "low";
@@ -121,6 +118,26 @@ function updateSafety(status) {
   $("#watchdogLabel").textContent = `Safety watchdog: ${status.watchdog_ms || "?"} ms`;
 }
 
+// The robot's last line is spoken when a task ends: the model's own confirmation of what
+// it did. The first status only sets a baseline, so opening the page does not replay the
+// ending of a task that finished before.
+let lastTaskEnding = null;
+let taskEndingsArmed = false;
+function announceTaskEnd(task) {
+  const state = task.state || "idle";
+  const line = String(task.reply || task.message || "").trim();
+  const key = `${task.command || ""}|${state}|${line}`;
+  if (!taskEndingsArmed) {
+    lastTaskEnding = key;
+    taskEndingsArmed = true;
+    return;
+  }
+  if (!["complete", "failed"].includes(state) || !line || key === lastTaskEnding) return;
+  lastTaskEnding = key;
+  const voice = new Audio(`/api/speech?text=${encodeURIComponent(line.slice(0, 600))}`);
+  voice.play().catch((error) => setFeedback(`Could not play the robot's voice: ${error.message}`, true));
+}
+
 function updateTask(task = {}) {
   const state = task.state || "idle";
   taskState.textContent = state.toUpperCase();
@@ -128,6 +145,7 @@ function updateTask(task = {}) {
   heardText.textContent = task.command || "No command yet";
   taskReply.textContent = task.reply || (state === "idle" ? "Waiting for a command..." : "Working...");
   taskMessage.textContent = task.message || "Idle";
+  announceTaskEnd(task);
   cancelTaskButton.disabled = !task.active;
   const llmState = task.source === "model"
     ? "Local LLM: connected"
@@ -157,6 +175,7 @@ function loadCapabilities(status) {
 async function pollStatus() {
   try {
     const status = await api("/api/status");
+    secureUrl = status.secure_url || null;
     lastStatusAt = Date.now();
     setConnection(Boolean(status.connected));
     updateSafety(status);
@@ -645,7 +664,6 @@ cancelTaskButton.addEventListener("click", async () => {
 });
 
 const voiceLabel = voiceButton.querySelector(".talk-button__label");
-const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
 
 function setVoiceUi(label, active = false) {
   voiceButton.classList.toggle("is-listening", active);
@@ -671,104 +689,9 @@ function releaseVoicePointer(pointerId) {
   } catch (_) { /* optional on mobile */ }
 }
 
-if (SpeechRecognition) {
-  recognition = new SpeechRecognition();
-  recognition.lang = "en-US";
-  recognition.interimResults = true;
-  recognition.maxAlternatives = 1;
-
-  const speechErrorMessage = (code) => {
-    const messages = {
-      "not-allowed": "Microphone permission was denied. Allow microphone access for this site and try again.",
-      "service-not-allowed": "Speech recognition is blocked by this browser. Check site permissions or use the typed command box.",
-      "audio-capture": "No working microphone was found by the browser.",
-      "no-speech": "No speech was detected. Hold TALK while speaking, then release.",
-      "network": `The browser speech service could not be reached.${window.isSecureContext ? "" : " This phone may require HTTPS for microphone features."}`,
-      "aborted": "Voice recognition was cancelled before speech was captured.",
-    };
-    return messages[code] || `Voice recognition failed (${code}). Use the typed command box if it continues.`;
-  };
-
-  const beginListening = (event) => {
-    if (emergencyStopped || speechActive || speechStarting) return;
-    event?.preventDefault();
-    speechPointer = event?.pointerId ?? null;
-    speechStarting = true;
-    stopSpeechWhenStarted = false;
-    pendingTranscript = "";
-    speechFailed = false;
-    setFeedback("");
-    setVoiceUi("LISTENING...", true);
-    taskMessage.textContent = "Listening...";
-    captureVoicePointer(speechPointer);
-    try {
-      recognition.start();
-    } catch (error) {
-      speechStarting = false;
-      speechPointer = null;
-      speechFailed = true;
-      showVoiceError(error.name === "InvalidStateError"
-        ? "Voice recognition is already busy. Release TALK and try again."
-        : `Voice recognition could not start: ${error.message || error.name}`);
-    }
-  };
-  const endListening = (event) => {
-    if (event?.pointerId !== undefined && speechPointer !== null
-        && event.pointerId !== speechPointer) return;
-    event?.preventDefault();
-    if (speechStarting && !speechActive) stopSpeechWhenStarted = true;
-    else if (speechActive) {
-      try { recognition.stop(); } catch (_) { /* browser is already stopping */ }
-    }
-    releaseVoicePointer(speechPointer);
-  };
-  voiceButton.addEventListener("pointerdown", beginListening);
-  voiceButton.addEventListener("pointerup", endListening);
-  voiceButton.addEventListener("pointercancel", endListening);
-  voiceButton.addEventListener("lostpointercapture", endListening);
-  voiceButton.addEventListener("keydown", (event) => {
-    if ((event.key === " " || event.key === "Enter") && !event.repeat) beginListening(event);
-  });
-  voiceButton.addEventListener("keyup", (event) => {
-    if (event.key === " " || event.key === "Enter") endListening(event);
-  });
-  recognition.addEventListener("start", () => {
-    speechStarting = false;
-    speechActive = true;
-    setVoiceUi("LISTENING...", true);
-    if (stopSpeechWhenStarted) {
-      try { recognition.stop(); } catch (_) { /* browser is already stopping */ }
-    }
-  });
-  recognition.addEventListener("end", () => {
-    const transcript = pendingTranscript.trim();
-    speechActive = false;
-    speechStarting = false;
-    speechPointer = null;
-    stopSpeechWhenStarted = false;
-    pendingTranscript = "";
-    setVoiceUi("HOLD TO TALK");
-    if (transcript && !speechFailed) submitTask(transcript);
-  });
-  recognition.addEventListener("result", (event) => {
-    let spoken = "";
-    let finalText = "";
-    for (let index = 0; index < event.results.length; index += 1) {
-      const text = event.results[index][0].transcript;
-      spoken += `${text} `;
-      if (event.results[index].isFinal) finalText += `${text} `;
-    }
-    spoken = spoken.trim();
-    heardText.textContent = spoken;
-    taskInput.value = spoken;
-    taskMessage.textContent = "Speech captured. Release TALK to send.";
-    if (finalText.trim()) pendingTranscript = finalText.trim();
-  });
-  recognition.addEventListener("error", (event) => {
-    speechFailed = true;
-    showVoiceError(speechErrorMessage(event.error));
-  });
-} else if (window.MediaRecorder && navigator.mediaDevices?.getUserMedia) {
+// Every browser records the audio and the Butler[bot] computer transcribes it with
+// Whisper; the browser's own (cloud) speech recognition is not used.
+if (window.MediaRecorder && navigator.mediaDevices?.getUserMedia) {
   let recorder = null;
   let recordingStream = null;
   let recordingChunks = [];
@@ -788,7 +711,7 @@ if (SpeechRecognition) {
     speechActive = false;
     speechStarting = true;
     setVoiceUi("TRANSCRIBING...", true);
-    taskMessage.textContent = "Transcribing locally on the Butler[bot] computer...";
+    taskMessage.textContent = "Transcribing with Whisper on the Butler[bot] computer...";
     const mimeType = recorder?.mimeType || recordingMimeType() || "application/octet-stream";
     const audio = new Blob(recordingChunks, { type: mimeType });
     recorder = null;
@@ -820,7 +743,8 @@ if (SpeechRecognition) {
     event?.preventDefault();
     if (!window.isSecureContext) {
       showVoiceError(
-        "iPhone microphone capture requires HTTPS. Reopen this remote through a trusted HTTPS address.");
+        "Microphone capture needs a secure page: open http://127.0.0.1:8000 on the robot computer, "
+        + "or a trusted HTTPS address on a phone (iPhone microphone capture requires HTTPS).");
       return;
     }
     recordingPointer = event?.pointerId ?? null;
@@ -895,11 +819,20 @@ if (SpeechRecognition) {
     if (event.key === " " || event.key === "Enter") endRecording(event);
   });
 } else {
-  voiceButton.disabled = true;
-  const unsupported = "This browser cannot record audio. Use Safari 14.1+, Chrome, Edge, or the typed command box.";
-  voiceButton.title = unsupported;
-  setVoiceUi("VOICE UNAVAILABLE");
-  setFeedback(unsupported, true);
+  // Browsers expose the microphone only on secure pages (HTTPS, or localhost). Opened over
+  // plain http:// from a phone, navigator.mediaDevices does not exist at all, in every browser.
+  const explainVoice = () => (window.isSecureContext
+    ? "This browser cannot record audio. Use the typed command box."
+    : "Voice needs a secure page. " + (secureUrl
+      ? `Open ${secureUrl} instead of this http:// address (tap NEEDS HTTPS).`
+      : "Open the remote over HTTPS (the server prints the address when it has one), "
+        + "or http://127.0.0.1:8000 on the robot computer."));
+  setVoiceUi(window.isSecureContext ? "VOICE UNAVAILABLE" : "NEEDS HTTPS");
+  voiceButton.addEventListener("click", () => {
+    if (!window.isSecureContext && secureUrl) window.location.href = secureUrl;
+    else setFeedback(explainVoice(), true);
+  });
+  setTimeout(() => setFeedback(explainVoice(), true), 1500);   // once the first status names the address
 }
 voiceButton.addEventListener("contextmenu", (event) => event.preventDefault());
 

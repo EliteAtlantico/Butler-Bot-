@@ -47,10 +47,10 @@ What makes that work in other scenes:
 * **Objects by name, not by colour.** `handwrist.detection.DetectionEstimator`
   boxes the object with YOLO-World when it is confident, otherwise the vision
   LLM, then measures it from depth with the colour estimator's own geometry.
-  Across the seven living-room items from benchmark viewpoints: 12 of 14 found,
-  centre error median 3 mm (worst 9 mm), width within 4 mm. The misses were the
-  keys, which are a plain block in the sim; `looks_like="small object on the
-  floor"` finds them.
+  Measured on the living-room items from benchmark viewpoints (then seven, since
+  cut to five): centre error median 3 mm (worst 9 mm), width within 4 mm. For
+  something the detector has no word for, `looks_like="small object on the
+  floor"` tells it what to ask for.
 * **Surfaces from the scene's furniture.** `handwrist.surfaces.find_surfaces`
   reads every uncovered, upward-facing top at arm height, and containers (a
   floor with walls). In the living room it reproduces the four hand-written
@@ -63,7 +63,11 @@ What makes that work in other scenes:
 
 Every tool returns `ok`, the reason when it failed (and for `pick_up`, the
 phases it got through), and the robot's pose, and never raises. A fallen robot
-refuses motion tools; one object is carried at a time.
+refuses motion tools. Each hand holds one object, so two can be carried at once:
+`pick_up` uses the free arm (leaving the holding arm, and its grip, alone), and
+`place_held_item` takes `object` to say which to put down. Loose items are dropped
+onto their surfaces when a scene loads (`handwrist.surfaces.settle_loose_items`),
+so no grasp starts on an item resting exactly in a table top.
 
 Guards learned from live runs:
 

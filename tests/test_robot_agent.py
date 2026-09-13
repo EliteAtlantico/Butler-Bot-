@@ -13,8 +13,8 @@ import pytest
 
 from robot_agent import __main__ as cli
 from robot_agent.agent import RobotAgent
-from robot_agent.tools import (RobotTools, Tool, blocked_by, lead_in, nearest_free, object_spec,
-                               resolve_scene, tool_catalogue)
+from robot_agent.tools import (Interrupted, RobotTools, Tool, blocked_by, lead_in, nearest_free,
+                               object_spec, resolve_scene, tool_catalogue)
 
 SURFACES = ["coffee_table", "basket", "sideboard"]
 
@@ -236,6 +236,178 @@ def test_call_never_raises_and_reports_failures_in_words():
     assert tools.call("wiggle", {"n": 1, "unused": None})["ok"]      # nulls are dropped
 
 
+def test_an_interruption_passes_through_call_instead_of_becoming_a_result():
+    tools = ToolsWithoutSim()
+
+    def stopped(n):
+        raise Interrupted("operator took over")
+    tools.tool_wiggle = stopped
+    with pytest.raises(Interrupted):
+        tools.call("wiggle", {"n": 1})
+
+
+class CountingLock:
+    def __init__(self):
+        self.entered = 0
+
+    def __enter__(self):
+        self.entered += 1
+
+    def __exit__(self, *exc):
+        return False
+
+
+def test_steps_run_under_the_lock_and_an_interrupted_skill_is_released():
+    tools = ToolsWithoutSim()
+    driven = []
+    tools.bot = SimpleNamespace(time=0.0, fallen=False, drive=lambda v, w: driven.append((v, w)))
+
+    def step(duration, controller):
+        tools.bot.time += duration
+    tools.bot.step = step
+    tools.step_lock = lock = CountingLock()
+    ticks = []
+
+    def on_step(bot):
+        ticks.append(bot.time)
+        if len(ticks) == 3:
+            raise Interrupted("operator took over")
+    tools.on_step = on_step
+    released = []
+    skill = SimpleNamespace(done=False, _manipulating=released.append)
+    with pytest.raises(Interrupted):
+        tools._run(skill, 10.0)
+    assert lock.entered == 3 and released == [False] and driven[-1] == (0.0, 0.0)
+
+
+class TwoHandedTools(ToolsWithoutSim):
+    """Hand bookkeeping without a sim: what each hand holds is set directly."""
+
+    def __init__(self, right=None, left=None):
+        super().__init__()
+        self.detection = SimpleNamespace(aliases={})
+        pick = lambda name: None if name is None else SimpleNamespace(spec=SimpleNamespace(name=name))  # noqa: E731
+        self.held = {"right": pick(right), "left": pick(left)}
+
+    def holding(self):
+        return {side: (p.spec.name if p else None) for side, p in self.held.items()}
+
+
+def test_a_second_object_goes_in_the_free_hand_and_a_third_is_refused():
+    one = TwoHandedTools(right="can")
+    assert one._free_sides() == ("left",)
+    with pytest.raises(ValueError, match="right hand is already holding the can"):
+        one.tool_pick_up(object="mug", arm="right")
+    full = TwoHandedTools(right="can", left="mug")
+    with pytest.raises(ValueError, match="both hands are full"):
+        full.tool_pick_up(object="remote")
+
+
+def test_putting_down_says_which_object_when_both_hands_are_full():
+    full = TwoHandedTools(right="can", left="mug")
+    with pytest.raises(ValueError, match="say which"):
+        full.tool_place_held_item("basket")
+    with pytest.raises(ValueError, match="not holding 'keys'"):
+        full.tool_place_held_item("basket", object="keys")
+    with pytest.raises(ValueError, match="not holding anything"):
+        TwoHandedTools().tool_place_held_item("basket")
+
+
+def test_a_dropped_object_frees_its_hand():
+    tools = TwoHandedTools(right="can", left="mug")
+    tools.holding = lambda: {"right": "can", "left": None}          # the mug slipped out
+    assert tools._free_sides() == ("left",)
+    assert tools.held["left"] is None
+
+
+class RollingBot:
+    """Just enough of a BracketBot for backing away: wheels, encoders, a balance loop."""
+
+    dt = 0.002
+
+    def __init__(self, pinned_until_pulses=0):
+        self.time, self.odometry, self.pitch, self.fallen = 0.0, 0.0, 0.0, False
+        self.v = 0.0
+        self.pinned_until_pulses = pinned_until_pulses      # furniture holds it until this many pulses
+        self.pulses = 0
+        self.torque = []
+        self.model = self.data = None
+        self.balance = SimpleNamespace(disable=lambda: None, enable=lambda state: None,
+                                       reset_reference=lambda state: None, trim_integral=0.0)
+        self.state = None
+
+    def drive(self, v, w):
+        self.v = v
+
+    def step(self, duration):
+        self.time += duration
+        if self.pulses >= self.pinned_until_pulses:
+            self.odometry += self.v * duration
+
+    def set_wheel_torque(self, left, right):
+        self.torque.append((left, right))
+
+
+def test_backing_away_reverses_the_distance_and_stops(monkeypatch):
+    import mujoco
+    tools = ToolsWithoutSim()
+    tools.bot, tools.step_lock, tools.on_step = RollingBot(), CountingLock(), None
+    monkeypatch.setattr(mujoco, "mj_step", lambda m, d: pytest.fail("no pulse was needed"))
+    result = tools._back_away()
+    assert result["clear"] and result["pulses"] == 0 and result["backed_away_m"] >= 0.45
+    assert tools.bot.v == 0.0
+
+
+def test_a_robot_pinned_by_furniture_gets_backward_wheel_pulses(monkeypatch):
+    import mujoco
+    tools = ToolsWithoutSim()
+    bot = RollingBot(pinned_until_pulses=2)
+    tools.bot, tools.step_lock, tools.on_step = bot, CountingLock(), None
+
+    def pulse_step(model, data):
+        if bot.torque and len(bot.torque) % int(round(0.20 / bot.dt)) == 0:
+            bot.pulses += 1
+    monkeypatch.setattr(mujoco, "mj_step", pulse_step)
+    result = tools._back_away()
+    assert result["pulses"] == 2 and result["clear"]
+    assert set(bot.torque) == {(-2.0, -2.0)}
+
+    stuck = RollingBot(pinned_until_pulses=99)
+    tools.bot = stuck
+    monkeypatch.setattr(mujoco, "mj_step", lambda m, d: None)
+    result = tools._back_away()
+    assert result["pulses"] == 3 and not result["clear"]           # gives up after the cap
+
+
+@pytest.mark.integration
+def test_loose_items_are_dropped_onto_real_contacts():
+    import mujoco
+    import numpy as np
+    from bracketbot_sim.robot import BracketBot
+    from handwrist.surfaces import settle_loose_items
+
+    bot = BracketBot(xml=str(resolve_scene("living_room")))
+    try:
+        bot.reset()
+        bot.balance.enable(bot.state)
+        m, d = bot.model, bot.data
+        mug = mujoco.mj_name2id(m, mujoco.mjtObj.mjOBJ_BODY, "mug")
+        adr = m.jnt_qposadr[m.body_jntadr[mug]]
+        start = d.qpos[adr + 2].copy()
+        d.qpos[adr + 2] -= 0.004                     # a mug authored 4 mm into the table
+        mujoco.mj_forward(m, d)
+        assert settle_loose_items(bot, seconds=1.0) == 5   # mug, can, remote, bottle, ball
+        assert abs(d.qpos[adr + 2] - start) < 0.002  # lifted out, fell, and came to rest on top
+        assert np.linalg.norm(d.cvel[mug][3:]) < 0.01
+        worst = min((d.contact[i].dist for i in range(d.ncon)
+                     if mug in (m.geom_bodyid[d.contact[i].geom1], m.geom_bodyid[d.contact[i].geom2])),
+                    default=0.0)
+        assert worst > -0.001
+        assert not bot.fallen
+    finally:
+        bot.close()
+
+
 def test_a_fallen_robot_refuses_to_move_but_still_answers_questions():
     tools = ToolsWithoutSim(fallen=True)
     assert "fallen over" in tools.call("wiggle", {"n": 1})["error"]
@@ -308,13 +480,30 @@ def test_real_robot_grasp_choices_pick_and_place_on_a_found_surface(living_room)
     assert boxy["ok"] or "wide" in boxy.get("error", "")
     plans = robot.call("plan_grasp", {"object": "can", "arm": "left"})
     assert plans["ok"] and {p["arm"] for p in plans["plans"]} == {"left"}, plans
-    picked = robot.call("pick_up", {"object": "can"})
-    assert picked["ok"], picked
-    assert picked["phases"][-1] == "done" and "can" in robot.call("get_status", {})["holding"].values()
-    assert "already holding" in robot.call("pick_up", {"object": "mug"})["error"]
-    placed = robot.call("place_held_item", {"surface": "side_table"})
-    assert placed["ok"], placed
-    assert robot.held is None
+
+
+@pytest.mark.integration
+@pytest.mark.slow
+def test_real_robot_carries_two_objects_one_in_each_hand():
+    """A fresh robot, so the second pick does not start from wherever other tests left it."""
+    robot = RobotTools(truth=True, verbose=False)
+    try:
+        first = robot.call("pick_up", {"object": "mug", "handle": True, "arm": "left"})
+        assert first["ok"], first
+        assert first["backed_away"]["clear"], first          # out from the table before turning
+        second = robot.call("pick_up", {"object": "can"})    # the free (right) hand
+        assert second["ok"], second
+        assert second["holding"] == {"left": "mug", "right": "can"}
+        assert "both hands are full" in robot.call("pick_up", {"object": "remote"})["error"]
+        assert "say which" in robot.call("place_held_item", {"surface": "basket"})["error"]
+        placed = robot.call("place_held_item", {"surface": "basket", "object": "can"})
+        assert placed["ok"], placed
+        assert placed["holding"] == {"left": "mug", "right": None}   # the mug stays in the other hand
+        placed = robot.call("place_held_item", {"surface": "side_table"})
+        assert placed["ok"], placed
+        assert robot.held == {"right": None, "left": None} and not robot.bot.fallen
+    finally:
+        robot.close()
 
 
 def _llm_up():

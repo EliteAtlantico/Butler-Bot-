@@ -128,14 +128,14 @@ class OwnershipTests(unittest.TestCase):
 class CameraAndUiContractTests(unittest.TestCase):
     def test_consumer_camera_contract_is_exactly_four_existing_model_poses(self):
         self.assertEqual([camera["id"] for camera in USER_CAMERAS],
-                         ["head-left", "head-right", "wrist-left", "wrist-right"])
+                         ["scene", "head-left", "head-right", "wrist-left", "wrist-right"])
         self.assertEqual([camera["rgbd"] for camera in USER_CAMERAS],
-                         [True, True, False, False])
+                         [False, True, True, False, False])
 
     def test_mobile_page_has_four_camera_buttons_and_hides_manual_controls(self):
         page = (Path(__file__).parents[1] / "static" / "index.html").read_text(
             encoding="utf-8")
-        self.assertEqual(page.count("data-camera-id="), 4)
+        self.assertEqual(page.count("data-camera-id="), 5)
         self.assertIn(
             '<details class="panel advanced-panel hidden" hidden aria-hidden="true">',
             page,
@@ -168,8 +168,9 @@ class CameraAndUiContractTests(unittest.TestCase):
         self.assertIn('voiceButton.addEventListener("pointerup"', script)
         self.assertIn('voiceButton.addEventListener("pointercancel"', script)
         self.assertIn('voiceButton.addEventListener("lostpointercapture"', script)
-        self.assertLess(script.index('setVoiceUi("LISTENING...", true)'),
-                        script.index("recognition.start()"))
+        # Whisper only: the button asks for the microphone before recording starts.
+        self.assertLess(script.index('setVoiceUi("ALLOW MICROPHONE", true)'),
+                        script.index("navigator.mediaDevices.getUserMedia"))
         self.assertIn("Microphone permission was denied", script)
         self.assertIn("submitTask(transcript)", script)
         self.assertIn("window.MediaRecorder", script)
