@@ -3,7 +3,7 @@
 # `git blame` across the merge commits. Widen `select` deliberately, one rule
 # at a time, with the fixes in their own commit.
 line-length = 120
-target-version = "py311"
+target-version = "py312"   # numpy==2.5.3, pinned in main_mujoco, requires >=3.12
 
 [lint]
 select = ["E501"]

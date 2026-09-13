@@ -1,0 +1,105 @@
+# Phase 7 CI. Three jobs:
+#   lint              ruff, line length only (ruff.toml says why)
+#   test              the whole pytest tree, Python 3.11 and 3.12
+#   integration-smoke the seams end to end, plus the arm evals vs committed baselines
+name: CI
+
+on:
+  push:
+    branches: [main, main-merge-6pm]
+  pull_request:
+  workflow_dispatch:
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  SKIP_LIVE_LLM: "1"          # the live-LLM tests need a llama-server; skip them
+  YOLO_AUTOINSTALL: "false"   # never let ultralytics pip-install things mid-test
+  PYTHONUNBUFFERED: "1"
+  MUJOCO_GL: egl              # headless GL through Mesa
+  PYOPENGL_PLATFORM: egl
+
+jobs:
+  lint:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - run: pip install ruff==0.16.7
+      - run: ruff check .
+
+  test:
+    runs-on: ubuntu-latest
+    timeout-minutes: 40
+    strategy:
+      fail-fast: false
+      matrix:
+        # not 3.11: main_mujoco pins numpy==2.5.3 (D6), which requires >=3.12
+        python-version: ["3.12", "3.13"]
+    steps:
+      - uses: actions/checkout@v4
+      - name: Headless GL libraries
+        run: sudo apt-get update -q && sudo apt-get install -y -q libegl1 libgl1 libgl1-mesa-dri
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python-version }}
+          cache: pip
+          cache-dependency-path: requirements-test.txt
+      - name: Install (CPU-only torch, so ultralytics does not pull CUDA)
+        run: |
+          pip install torch torchvision --index-url https://download.pytorch.org/whl/cpu
+          pip install -r requirements-test.txt
+      - name: Cache YOLO weights
+        uses: actions/cache@v4
+        with:
+          path: |
+            weights
+            ~/.config/Ultralytics
+            ~/.cache/clip
+          key: yolo-weights-v1
+      - name: pytest
+        run: python -m pytest
+
+  integration-smoke:
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v4
+      - name: Headless GL libraries
+        run: sudo apt-get update -q && sudo apt-get install -y -q libegl1 libgl1 libgl1-mesa-dri
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+          cache-dependency-path: main_mujoco/requirements.txt
+      # No ultralytics: neither smoke case uses YOLO (give-up stubs the LLM and
+      # detector; the pick drives to a coordinate) and the evals do not either.
+      - run: pip install -r main_mujoco/requirements.txt matplotlib==3.11.2
+      - name: Smoke -- give up -> phone remote (Seam D), drive -> pick the keys (Seam C)
+        run: python ci/smoke_pipeline.py
+      - name: eval_pick vs results/pick_eval.json
+        working-directory: Hand_and_Wrists
+        run: |
+          python eval_pick.py -n 12 --seed 0 --workers 4 --out "$RUNNER_TEMP/eval/pick_eval"
+          # exact: Linux (WSL Ubuntu, py3.12) reproduced the Windows-made
+          # baseline bit for bit, 84/84 -- so any drift here is the code.
+          python ../ci/compare_evals.py pick_eval "$RUNNER_TEMP/eval/pick_eval.json" --mode exact
+      - name: eval_tasks vs results/task_eval.json
+        working-directory: Hand_and_Wrists
+        run: |
+          python eval_tasks.py -n 2 --seed 0 --workers 4 --out "$RUNNER_TEMP/eval/task_eval"
+          # outcome, not exact: this eval finds items with the camera, and Mesa
+          # renders differently from the Windows/WGL box the baseline came from.
+          # On Linux the same 28/30 trials pass and fail, but final positions
+          # drift by mm and sim_time by up to ~2 s -- a platform difference, not code.
+          python ../ci/compare_evals.py task_eval "$RUNNER_TEMP/eval/task_eval.json" --mode outcome
+      - name: Keep the eval results
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: eval-results
+          path: ${{ runner.temp }}/eval
