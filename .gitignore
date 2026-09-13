@@ -12,8 +12,11 @@ MUJOCO_LOG.TXT
 yolo_dataset/
 runs/
 yolov8n.pt
-# base weights auto-downloaded into the repo root by ultralytics
-/weights/
+# Base weights auto-downloaded by ultralytics. Unanchored on purpose: they
+# land in the CURRENT working directory, so running from comp_vision_sim/
+# creates comp_vision_sim/weights/ -- 338 MB of CLIP that a root-anchored
+# /weights/ does not catch.
+weights/
 
 # Run outputs
 vision_nav.png
