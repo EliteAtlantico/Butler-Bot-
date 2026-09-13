@@ -1,14 +1,19 @@
-"""Find any object by name with the head RGB-D camera, and measure it for a grasp.
+"""Find any object by what it is with the head RGB-D camera, and measure it for a grasp.
 
-`vision.CameraEstimator` finds the seven living-room items by calibrated colour.
-This keeps its geometry -- the top-face outline, the silhouette width, the
-handle -- and replaces the colour step with an open-vocabulary detector, so the
-grasp planner gets the same ObjectEstimate for anything that can be named:
+This is the estimator `Pick` uses by default: it sees "the ball" or "the keys"
+because they look like a ball and keys. `vision.CameraEstimator` -- which finds
+the seven living-room items by calibrated colour windows -- is kept for
+comparison. This keeps its geometry -- the top-face outline, the silhouette
+width, the handle -- and replaces the colour step with an open-vocabulary
+detector, so the grasp planner gets the same ObjectEstimate for anything that
+can be named:
 
   1. A box around the object: YOLO-World (pretrained, any noun phrase) when it
-     is confident, otherwise the vision LLM. On these renders YOLO finds a mug
-     as "cup" at 0.56 but as "mug" hardly at all, and misses small flat things;
-     the vision LLM boxes both to within a few millimetres of the truth.
+     is confident, otherwise the vision LLM. Each catalogue object is asked
+     for by the names a detector knows it by (QUERIES: a mug is also a "cup").
+     A colour in the request ("the red mug") only ranks the candidates: the
+     right colour beats a more confident box of the wrong one, but an object
+     is never missed for being described in the wrong colour.
   2. The depth pixels inside the box, lifted to world xyz by `observe()`.
   3. What the object stands on, from a ray cast down through the middle of the
      box (as `GraspPlanner.support` does), and only the points above that
@@ -17,15 +22,19 @@ grasp planner gets the same ObjectEstimate for anything that can be named:
   4. The 3-D cluster nearest the centre, then CameraEstimator's geometry.
 
     see = DetectionEstimator()
-    est = see(bot, ObjectSpec("mug", "", handle_geom="handle"))   # ObjectEstimate or None
+    est = see(bot, CATALOGUE["mug"])                              # ObjectEstimate or None
+    see.aliases["mug"] = "red mug"                                # prefer the red one
     see.last_box                                                  # what the detector saw
 """
 from __future__ import annotations
 
+import re
 from dataclasses import replace
 
 import mujoco
 import numpy as np
+
+from vision_sim.perception import rgb_to_hsv
 
 from .objects import truth_estimate
 from .places import _geom_top
@@ -35,8 +44,115 @@ from .vision import CAMERA, CameraEstimator, Sighting, clusters
 # the box from the name asked for: with "cup" and "bottle" also listed, a mug
 # asked for as "mug" came back labelled "cup" and the can as "bottle".
 DISTRACTORS = ("person", "chair", "sofa", "table", "desk", "bed", "cabinet", "shelf",
-               "door", "potted plant", "lamp", "television", "refrigerator", "sink", "wall")
+               "door", "potted plant", "lamp", "television", "refrigerator", "sink", "wall",
+               "basket")
 YOLO_CACHE = 3          # detectors kept, one per vocabulary
+# A box a distractor claims more confidently, overlapping this much, is the
+# distractor's: the laundry basket scores 0.30 as a "cardboard box" but higher
+# as a basket, and handing the basket to the grasp planner as the box fails.
+CLAIMED_IOU = 0.5
+# The zoom pass: overlapping TILE x TILE px crops, each looked at ZOOM times
+# bigger. Keys on the floor at pick range are ~20 x 10 px in the head camera,
+# too small for YOLO-World in the whole frame; twice as big, they are found.
+TILE, ZOOM = 320, 2
+# every geom group but 2, the household looks (and robot visuals): a support
+# is what an object rests on, not the picture of it
+_NOT_LOOKS = np.array([1, 1, 0, 1, 1, 1], np.uint8)
+
+# What to ask the detector for, per catalogue object: its own name and what an
+# off-the-shelf detector is likelier to call it. A box under any of them is
+# the object. Measured on the head camera's renders of the scene models.
+QUERIES = {
+    "mug": ("mug", "cup"),
+    "can": ("soda can", "can"),
+    "bottle": ("bottle", "water bottle"),
+    "remote": ("remote control", "tv remote"),
+    "keys": ("keys", "car key"),
+    "ball": ("tennis ball", "ball"),
+    "box": ("cardboard box", "box"),
+}
+
+
+def _hue(centre, width, sat=0.30, val=0.18):
+    def match(hsv):
+        d = np.abs((hsv[..., 0] - centre + 180.0) % 360.0 - 180.0)
+        return (d <= width) & (hsv[..., 1] >= sat) & (hsv[..., 2] >= val)
+    return match
+
+
+# A colour word -> which pixels are that colour, broadly, as a person means it.
+# Deliberately loose: it ranks candidates the detector found, it never finds one.
+COLOURS = {
+    "red": _hue(0, 22), "orange": _hue(28, 12), "yellow": _hue(56, 16), "gold": _hue(42, 12, 0.35, 0.40),
+    "green": _hue(115, 45), "teal": _hue(178, 18), "cyan": _hue(188, 18), "blue": _hue(220, 30),
+    "purple": _hue(275, 25), "violet": _hue(275, 25), "pink": _hue(325, 25),
+    "brown": lambda hsv: (_hue(28, 20, 0.30, 0.10)(hsv) & (hsv[..., 2] <= 0.60)),
+    "white": lambda hsv: (hsv[..., 1] <= 0.20) & (hsv[..., 2] >= 0.70),
+    "black": lambda hsv: hsv[..., 2] <= 0.22,
+    "grey": lambda hsv: (hsv[..., 1] <= 0.20) & (hsv[..., 2] > 0.22) & (hsv[..., 2] < 0.75),
+    "silver": lambda hsv: (hsv[..., 1] <= 0.20) & (hsv[..., 2] >= 0.45),
+}
+COLOURS["gray"] = COLOURS["grey"]
+COLOURS["golden"] = COLOURS["brass"] = COLOURS["gold"]
+_FILLER = {"coloured", "colored", "colour", "color", "dark", "light", "bright"}
+
+
+def split_colour(text: str) -> tuple[str | None, str]:
+    """'the Red mug' -> ('red', 'the mug'): the first colour word, and the rest."""
+    words = re.findall(r"[a-z0-9]+", (text or "").lower())
+    colour = next((w for w in words if w in COLOURS), None)
+    rest = [w for w in words if w != colour and w not in _FILLER]
+    return colour, " ".join(rest)
+
+
+def colour_fraction(rgb, box, colour: str) -> float:
+    """Share of the middle of `box` (inner 60 %) that is `colour`."""
+    h, w = rgb.shape[:2]
+    u0, v0, u1, v1 = box
+    du, dv = 0.2 * (u1 - u0), 0.2 * (v1 - v0)
+    u0, u1 = int(max(u0 + du, 0)), int(min(u1 - du, w - 1)) + 1
+    v0, v1 = int(max(v0 + dv, 0)), int(min(v1 - dv, h - 1)) + 1
+    if u1 <= u0 or v1 <= v0:
+        return 0.0
+    return float(COLOURS[colour](rgb_to_hsv(rgb[v0:v1, u0:u1])).mean())
+
+
+def _iou(a, b) -> float:
+    iw = min(a[2], b[2]) - max(a[0], b[0])
+    ih = min(a[3], b[3]) - max(a[1], b[1])
+    if iw <= 0 or ih <= 0:
+        return 0.0
+    inter = iw * ih
+    area = lambda r: max(r[2] - r[0], 0) * max(r[3] - r[1], 0)  # noqa: E731
+    return inter / max(area(a) + area(b) - inter, 1e-9)
+
+
+def _nms(hits, iou=0.5) -> list[dict]:
+    """Most confident first, dropping any box that repeats a kept one."""
+    kept = []
+    for h in sorted(hits, key=lambda h: -h["confidence"]):
+        if all(_iou(h["box"], k["box"]) < iou for k in kept):
+            kept.append(h)
+    return kept
+
+
+def _tiles(w, h, tile=TILE):
+    """Top-left corners of overlapping tiles (half a tile apart) covering w x h."""
+    def starts(n):
+        if n <= tile:
+            return [0]
+        k = int(np.ceil((n - tile) / (tile / 2)))
+        return [int(round(i * (n - tile) / k)) for i in range(k + 1)]
+    return [(x, y) for y in starts(h) for x in starts(w)]
+
+
+def rank_by_colour(rgb, hits, colour: str) -> list[dict]:
+    """Candidates best first, with colour as the tie-breaker it should be: a
+    box whose middle is a quarter or more the named colour keeps its full
+    confidence, one with none of it keeps 35 %."""
+    for h in hits:
+        h["colour_match"] = round(colour_fraction(rgb, h["box"], colour), 3)
+    return sorted(hits, key=lambda h: -h["confidence"] * (0.35 + 0.65 * min(1.0, h["colour_match"] / 0.25)))
 
 LLM_BOX_PROMPT = (
     "Find {name} in this photo from a home robot's head camera. The image is {width} px wide and {height}"
@@ -74,6 +190,9 @@ class DetectionEstimator(CameraEstimator):
         # described ("small object on the floor")
         self.aliases: dict[str, str] = {}
         self.yolo_error: str | None = None
+        # set when the vision LLM could not be reached; it is not asked again,
+        # so a robot with no LLM server does not wait out a timeout every look
+        self.llm_error: str | None = None
         self._yolo: dict[tuple, object] = {}      # vocabulary -> detector, oldest first
         self._bot = None
 
@@ -100,19 +219,37 @@ class DetectionEstimator(CameraEstimator):
                                            imgsz=self.imgsz)
         return self._yolo[key]
 
-    def yolo_boxes(self, rgb, names) -> list[dict]:
-        """YOLO boxes for `names`, most confident first."""
+    def yolo_boxes(self, rgb, names, zoom: bool = False) -> list[dict]:
+        """YOLO boxes for `names`, most confident first.
+
+        A box a distractor claims more confidently is left out (CLAIMED_IOU).
+        zoom: also look at overlapping tiles blown up ZOOM times, for things
+        only a few pixels across; their boxes come back in full-frame pixels
+        with source "yolo-zoom"."""
+        from PIL import Image
         det = self.yolo(names)
-        # Ultralytics reads a raw array as BGR; MuJoCo renders RGB.
-        result = det._predict(np.ascontiguousarray(rgb[..., ::-1]))
-        wanted, out = set(names), []
-        for box in result.boxes:
-            name = det.names[int(box.cls)]
-            if name in wanted:
-                u0, v0, u1, v1 = (int(round(v)) for v in box.xyxy[0].tolist())
-                out.append({"name": name, "confidence": float(box.conf),
-                            "box": (u0, v0, u1, v1), "source": "yolo"})
-        return sorted(out, key=lambda b: -b["confidence"])
+        h, w = rgb.shape[:2]
+        views = [(rgb, 0, 0, 1)]
+        if zoom:
+            for x, y in _tiles(w, h):
+                crop = Image.fromarray(np.ascontiguousarray(rgb[y:y + TILE, x:x + TILE]))
+                big = crop.resize((crop.width * ZOOM, crop.height * ZOOM), Image.BICUBIC)
+                views.append((np.asarray(big), x, y, ZOOM))
+        wanted, out, claimed = set(names), [], []
+        for img, ox, oy, s in views:
+            # Ultralytics reads a raw array as BGR; MuJoCo renders RGB.
+            result = det._predict(np.ascontiguousarray(img[..., ::-1]))
+            for box in result.boxes:
+                name = det.names[int(box.cls)]
+                u0, v0, u1, v1 = (int(round(c / s + o)) for c, o in
+                                  zip(box.xyxy[0].tolist(), (ox, oy, ox, oy)))
+                hit = {"name": name, "confidence": float(box.conf), "box": (u0, v0, u1, v1),
+                       "source": "yolo" if s == 1 else "yolo-zoom"}
+                (out if name in wanted else claimed).append(hit)
+        out = [o for o in out if not any(c["confidence"] > o["confidence"]
+                                         and _iou(c["box"], o["box"]) >= CLAIMED_IOU
+                                         for c in claimed)]
+        return _nms(out)
 
     def llm_box(self, rgb, name) -> dict | None:
         from vision_sim.llm_reasoner import LLMClient, _extract_json, _to_bool
@@ -136,21 +273,41 @@ class DetectionEstimator(CameraEstimator):
         return {"name": name, "confidence": conf, "box": (u0, v0, u1, v1), "source": "llm"}
 
     def find(self, rgb, name) -> dict | None:
-        """The best box for `name`. auto: a confident YOLO box, else the vision
-        LLM's, else YOLO's weak one."""
+        """The best box for `name`, found by what the object is.
+
+        `name` may carry a colour ("red mug"): the object is looked for by its
+        noun, under every name in QUERIES, and the colour only ranks what is
+        found. With nothing confident in the whole frame, it looks again with
+        the zoom pass. auto: a confident YOLO box, else the vision LLM's, else
+        YOLO's weak one."""
+        colour, noun = split_colour(name)
+        noun = noun or name
         weak = None
         if self.backend in ("auto", "yolo"):
-            try:
-                hits = self.yolo_boxes(rgb, [name])
-            except ImportError as e:
-                if self.backend == "yolo":
-                    raise
-                self.yolo_error, hits = str(e), []
-            if hits and (self.backend == "yolo" or hits[0]["confidence"] >= self.yolo_accept):
+            hits = []
+            for zoom in (False, True):
+                try:
+                    hits = self.yolo_boxes(rgb, list(QUERIES.get(noun, (noun,))), zoom=zoom)
+                except ImportError as e:
+                    if self.backend == "yolo":
+                        raise
+                    self.yolo_error, hits = str(e), []
+                    break
+                if colour is not None:
+                    hits = rank_by_colour(rgb, hits, colour)
+                strong = [h for h in hits if h["confidence"] >= self.yolo_accept]
+                if strong:
+                    return strong[0]
+            if hits and self.backend == "yolo":
                 return hits[0]
             weak = hits[0] if hits else None
-        if self.backend in ("auto", "llm"):
-            return self.llm_box(rgb, name) or weak
+        if self.backend in ("auto", "llm") and self.llm_error is None:
+            try:
+                return self.llm_box(rgb, name) or weak
+            except (OSError, RuntimeError, ValueError) as e:     # no server, a timeout, no requests
+                if self.backend == "llm":
+                    raise
+                self.llm_error = f"{type(e).__name__}: {e}"
         return weak
 
     # ---------------------------------------------------------------- depth
@@ -161,7 +318,7 @@ class DetectionEstimator(CameraEstimator):
         down = np.array([0.0, 0.0, -1.0])
         hit = np.zeros(1, np.int32)
         for _ in range(8):
-            dist = mujoco.mj_ray(m, d, start, down, None, 1, -1, hit)
+            dist = mujoco.mj_ray(m, d, start, down, _NOT_LOOKS, 1, -1, hit)
             g = int(hit[0])
             if dist < 0 or g < 0:
                 return 0.0

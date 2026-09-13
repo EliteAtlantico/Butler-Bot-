@@ -64,7 +64,7 @@ class SceneInfo:
                    margin: float = 2.0, max_map_range: float = 8.0):
         root = _robot_root(model)
         robot = _robot_geoms(model, root)
-        static = ~robot
+        static = ~robot & ~_looks(model)
 
         floor_z = _floor_height(model, data, static)
         radius, top = _robot_extent(model, data, robot, floor_z, root)
@@ -131,6 +131,18 @@ def _robot_geoms(model, root: int | None = None) -> np.ndarray:
     if root is None:
         root = _robot_root(model)
     return model.body_rootid[model.geom_bodyid] == root
+
+
+def _looks(model) -> np.ndarray:
+    """Boolean mask over geoms: the household "look" meshes.
+
+    They are pictures of the items, furniture and person (assets/household.xml)
+    drawn over the collision primitives, which are the real scenery: visual
+    only, in group 2 -- where the robot model keeps its own visual meshes. A
+    mesh's box is taken round its principal axes, so counting a look would
+    stretch the scene bounds past what is actually there.
+    """
+    return (model.geom_group == 2) & (model.geom_contype == 0) & (model.geom_conaffinity == 0)
 
 
 def _floor_height(model, data, static: np.ndarray) -> float:

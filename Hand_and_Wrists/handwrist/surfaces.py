@@ -24,7 +24,7 @@ from dataclasses import dataclass
 import mujoco
 import numpy as np
 
-from .places import PlaceSpec, Surface, _geom_top
+from .places import PlaceSpec, Surface, _geom_top, is_look
 
 MIN_HALF = 0.05              # narrower than 10 cm: a leg, a rail, a panel
 MIN_TOP, MAX_TOP = 0.10, 1.0  # set-down heights the arm reaches (containers may sit lower)
@@ -96,9 +96,10 @@ class FoundSurface:
 def find_surfaces(model, data, max_top=MAX_TOP) -> list[FoundSurface]:
     """Every usable surface in the scene, in model order."""
     m, d = model, data
+    # the looks are left out: a person's model would "cover" the palm it holds out
     boxes = {g: _world_aabb(m, d, g) for g in range(m.ngeom)
              if m.geom_type[g] != mujoco.mjtGeom.mjGEOM_PLANE
-             and _fixed(m, int(m.geom_bodyid[g]))}
+             and _fixed(m, int(m.geom_bodyid[g])) and not is_look(m, g)}
     found = []
     for g, (lo, hi) in boxes.items():
         b = int(m.geom_bodyid[g])
@@ -161,7 +162,7 @@ def obstacle_footprints(model, data, exclude_body=None, max_bottom=1.6):
     for g in range(m.ngeom):
         b = int(m.geom_bodyid[g])
         if (m.geom_type[g] == mujoco.mjtGeom.mjGEOM_PLANE or not _fixed(m, b)
-                or b == exclude_body):
+                or b == exclude_body or is_look(m, g)):
             continue
         lo, hi = _world_aabb(m, d, g)
         if lo[2] > max_bottom:

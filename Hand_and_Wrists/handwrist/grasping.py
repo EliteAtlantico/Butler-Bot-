@@ -21,6 +21,7 @@ from bracketbot_sim.kinematics import ArmIK, rot_z
 
 from .gripper import Gripper
 from .objects import ObjectEstimate, ObjectSpec
+from .places import is_look
 
 PAD_HALF_Z = 0.018        # fingertip pad half-height (build_dynamic_model.py)
 SURFACE_CLEAR = 0.005     # keep the pad bottoms this far off the surface
@@ -111,7 +112,10 @@ class GraspPlanner:
             p, _ = ik.site_pose(d)
             self.lateral[s] = float(p[1] - d.xpos[chassis][1])
 
-        self._ray_group = np.array([1, 0, 0, 0, 0, 0], np.uint8)
+        # Scenery is group 0, and group 3 holds the collision primitives the
+        # household looks hide (the person's palm among them). Group 2 -- the
+        # looks, and the robot's visual meshes -- is never a support.
+        self._ray_group = np.array([1, 0, 0, 1, 0, 0], np.uint8)
         self._ray_hit = np.zeros(1, np.int32)
 
     # ---------------------------------------------------------------- support
@@ -128,9 +132,10 @@ class GraspPlanner:
                 return Support("floor", 0.0)
             # A camera estimate carries no body id, and its bottom can sit a
             # little low -- so the ray may hit the item itself or another loose
-            # one. Free bodies are never furniture: look through them.
+            # one. Anything that moves (loose items, the robot's own collision
+            # geoms, also in group 3) is never furniture: look through it.
             b = m.geom_bodyid[g]
-            if m.body_jntnum[b] and m.jnt_type[m.body_jntadr[b]] == mujoco.mjtJoint.mjJNT_FREE:
+            if m.body_weldid[b] != 0:
                 start = start + down * (dist + 0.002)
                 continue
             break
@@ -277,7 +282,8 @@ class GraspPlanner:
         out = []
         for g in range(m.ngeom):
             b = m.geom_bodyid[g]
-            if m.geom_type[g] == mujoco.mjtGeom.mjGEOM_PLANE or m.body_weldid[b] != 0:
+            if (m.geom_type[g] == mujoco.mjtGeom.mjGEOM_PLANE or m.body_weldid[b] != 0
+                    or is_look(m, g)):
                 continue
             R = d.geom_xmat[g].reshape(3, 3)
             c = d.geom_xpos[g] + R @ m.geom_aabb[g, :3]

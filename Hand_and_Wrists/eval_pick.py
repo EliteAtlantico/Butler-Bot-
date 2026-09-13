@@ -52,8 +52,10 @@ def run_trial(job):
     truth = truth_estimate(m, d, CATALOGUE[name])
 
     if vision:
-        from handwrist.vision import CameraEstimator
-        estimator = CameraEstimator()
+        # finds the object by what it is; YOLO only, so a run does not depend
+        # on whether an LLM server happens to be up
+        from handwrist.detection import DetectionEstimator
+        estimator = DetectionEstimator(backend="yolo")
     else:
         estimator = truth_estimator
     pick = Pick(bot, name, estimator=estimator, verbose=False)

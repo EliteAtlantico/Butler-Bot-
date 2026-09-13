@@ -51,16 +51,21 @@ def run_trial(job):
     rng = np.random.default_rng(seed)
     bot = BracketBot(xml=str(handwrist.HOME_SCENE))
     m, d = bot.model, bot.data
+    if vision:
+        # items found by what they are; YOLO only, so a run does not depend on
+        # whether an LLM server happens to be up
+        from handwrist.detection import DetectionEstimator
+        see = DetectionEstimator(backend="yolo")
+    else:
+        see = truth_estimator
     if mode == "tidy":
         scenarios.setup_tidy(bot, rng)
-        task = make_task(bot, "tidy", estimator=None if vision else truth_estimator,
-                         verbose=False)
+        task = make_task(bot, "tidy", estimator=see, verbose=False)
         items = list(scenarios.TIDY_ITEMS)
     else:
         scenarios.setup(bot, item, rng)
         action, to = ("put", "basket") if mode == "basket" else ("fetch", "person")
-        task = make_task(bot, action, estimator=None if vision else truth_estimator,
-                         verbose=False, item=item, to=to)
+        task = make_task(bot, action, estimator=see, verbose=False, item=item, to=to)
         items = [item]
 
     wall = time.time()

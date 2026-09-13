@@ -75,13 +75,23 @@ jobs:
         with:
           python-version: "3.12"
           cache: pip
-          cache-dependency-path: main_mujoco/requirements.txt
-      # No ultralytics: neither smoke case uses YOLO (give-up stubs the LLM and
-      # detector; the pick drives to a coordinate) and the evals do not either.
-      # requests: vision_sim.llm_reasoner.LLMClient refuses to construct without
-      # it, even with the LLM stubbed. No requirements file lists it yet; the
-      # test job only gets it through ultralytics.
-      - run: pip install -r main_mujoco/requirements.txt matplotlib==3.11.2 requests==2.34.2
+          cache-dependency-path: requirements-test.txt
+      # YOLO-World: Pick finds items by what they are (handwrist.detection), so
+      # the smoke pick and eval_tasks need the detector. CPU torch first, so
+      # ultralytics does not pull CUDA. requests comes with ultralytics
+      # (vision_sim.llm_reasoner.LLMClient refuses to construct without it).
+      - name: Install (CPU-only torch)
+        run: |
+          pip install torch torchvision --index-url https://download.pytorch.org/whl/cpu
+          pip install -r requirements-test.txt
+      - name: Cache YOLO weights
+        uses: actions/cache@v4
+        with:
+          path: |
+            weights
+            ~/.config/Ultralytics
+            ~/.cache/clip
+          key: yolo-weights-v1
       - name: Smoke -- give up -> phone remote (Seam D), drive -> pick the keys (Seam C)
         run: python ci/smoke_pipeline.py
       - name: eval_pick vs results/pick_eval.json
@@ -95,10 +105,10 @@ jobs:
         working-directory: Hand_and_Wrists
         run: |
           python eval_tasks.py -n 2 --seed 0 --workers 4 --out "$RUNNER_TEMP/eval/task_eval"
-          # outcome, not exact: this eval finds items with the camera, and Mesa
-          # renders differently from the Windows/WGL box the baseline came from.
-          # On Linux the same 28/30 trials pass and fail, but final positions
-          # drift by mm and sim_time by up to ~2 s -- a platform difference, not code.
+          # outcome, not exact: this eval finds items with the camera (YOLO-World
+          # on the rendered models), and Mesa renders differently from the
+          # Windows/WGL box the baseline came from, so final positions drift by
+          # mm and sim_time by seconds -- a platform difference, not code.
           python ../ci/compare_evals.py task_eval "$RUNNER_TEMP/eval/task_eval.json" --mode outcome
       - name: Keep the eval results
         if: always()

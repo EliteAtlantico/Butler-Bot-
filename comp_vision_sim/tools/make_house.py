@@ -167,19 +167,23 @@ ITEM_XML = {
       <geom name="mug_body" class="item" type="cylinder" pos="0 0 0.05" size="0.04 0.05" material="mug" mass="0.22"/>
       <geom name="mug_handle" class="item" type="box" pos="0 0.05 0.05" size="0.008 0.012 0.03"
             material="mug" mass="0.03"/>
+      <geom class="look" mesh="look_mug" material="look_mug"/>
     </body>\n''',
     "can": '''    <body name="can" pos="{x:.3f} {y:.3f} {z:.3f}">
       <freejoint name="can_free"/>
       <geom name="can_body" class="item" type="cylinder" pos="0 0 0.06" size="0.033 0.06" material="can" mass="0.15"/>
+      <geom class="look" mesh="look_can" material="look_can"/>
     </body>\n''',
     "remote": '''    <body name="remote" pos="{x:.3f} {y:.3f} {z:.3f}" euler="0 0 0.4">
       <freejoint name="remote_free"/>
       <geom name="remote_body" class="item" type="box" pos="0 0 0.0125" size="0.09 0.024 0.0125"
             material="remote" mass="0.12"/>
+      <geom class="look" mesh="look_remote" material="look_remote"/>
     </body>\n''',
     "box": '''    <body name="box" pos="{x:.3f} {y:.3f} {z:.3f}" euler="0 0 0.3">
       <freejoint name="box_free"/>
       <geom name="box_body" class="item" type="box" pos="0 0 0.025" size="0.06 0.025 0.025" material="box" mass="0.10"/>
+      <geom class="look" mesh="look_box" material="look_box"/>
     </body>\n''',
 }
 
@@ -195,12 +199,21 @@ ITEM_CONSOLE_XML = '''    <body name="item_console" pos="{x:.3f} {y:.3f} 0">
     </body>
 '''
 
+# Wicker, with a rim and hand-holds that are visual only and stay inside the
+# walls' footprint and no higher than their tops -- the place planner reads
+# the basket's rim height and footprint off every geom on this body.
 BASKET_XML = '''    <body name="basket" pos="{x:.3f} {y:.3f} 0">
-      <geom name="basket_floor" type="box" pos="0 0 0.005" size="0.22 0.17 0.005" material="basketwv"/>
-      <geom name="basket_wall_e" type="box" pos=" 0.215 0 0.10" size="0.005 0.17 0.10" material="basketwv"/>
-      <geom name="basket_wall_w" type="box" pos="-0.215 0 0.10" size="0.005 0.17 0.10" material="basketwv"/>
-      <geom name="basket_wall_n" type="box" pos="0  0.165 0.10" size="0.22 0.005 0.10" material="basketwv"/>
-      <geom name="basket_wall_s" type="box" pos="0 -0.165 0.10" size="0.22 0.005 0.10" material="basketwv"/>
+      <geom name="basket_floor" type="box" pos="0 0 0.005" size="0.22 0.17 0.005" material="look_wicker"/>
+      <geom name="basket_wall_e" type="box" pos=" 0.215 0 0.10" size="0.005 0.17 0.10" material="look_wicker"/>
+      <geom name="basket_wall_w" type="box" pos="-0.215 0 0.10" size="0.005 0.17 0.10" material="look_wicker"/>
+      <geom name="basket_wall_n" type="box" pos="0  0.165 0.10" size="0.22 0.005 0.10" material="look_wicker"/>
+      <geom name="basket_wall_s" type="box" pos="0 -0.165 0.10" size="0.22 0.005 0.10" material="look_wicker"/>
+      <geom class="look" type="box" pos=" 0.212 0 0.194" size="0.008 0.170 0.006" material="look_tabletop"/>
+      <geom class="look" type="box" pos="-0.212 0 0.194" size="0.008 0.170 0.006" material="look_tabletop"/>
+      <geom class="look" type="box" pos="0  0.162 0.194" size="0.220 0.008 0.006" material="look_tabletop"/>
+      <geom class="look" type="box" pos="0 -0.162 0.194" size="0.220 0.008 0.006" material="look_tabletop"/>
+      <geom class="look" type="box" pos=" 0.2196 0 0.165" size="0.0005 0.050 0.013" rgba="0.08 0.06 0.04 1"/>
+      <geom class="look" type="box" pos="-0.2196 0 0.165" size="0.0005 0.050 0.013" rgba="0.08 0.06 0.04 1"/>
     </body>\n'''
 
 
@@ -393,6 +406,7 @@ HEADER = '''<mujoco model="random_house_{seed}">
        told none of it and arrives with a goal coordinate and a depth camera. -->
   <include file="../main_mujoco/chopped_dynamic.xml"/>
   <compiler meshdir="../main_mujoco/meshes/" texturedir="assets/"/>
+  <include file="assets/household.xml"/>
   <option noslip_iterations="5"/>
 
   <statistic center="6 0 1.0" extent="8.0"/>
@@ -414,8 +428,6 @@ HEADER = '''<mujoco model="random_house_{seed}">
     <texture type="2d" name="t_metal" file="metal_brushed.png"/>
     <mesh name="m_foliage" file="../../comp_vision_sim/assets/foliage.stl"/>
     <mesh name="m_pot"     file="../../comp_vision_sim/assets/pot.stl"/>
-    <mesh name="m_mug"     file="../../comp_vision_sim/assets/mug.stl"/>
-    <mesh name="m_can"     file="../../comp_vision_sim/assets/can.stl"/>
 
     <material name="floorwood" texture="t_floor" texuniform="true" texrepeat="1.6 1.6"
               reflectance="0.05" specular="0.18" shininess="0.25"/>
@@ -428,18 +440,18 @@ HEADER = '''<mujoco model="random_house_{seed}">
     <material name="metal"   texture="t_metal" texuniform="true" texrepeat="1 1" specular="0.75" shininess="0.72"
               reflectance="0.12"/>
     <material name="carton"  rgba="0.72 0.58 0.38 1" specular="0.05"/>
-    <!-- KNOWN ISSUE (baseline demo, seed 35): handwrist's calibrated colour estimator
-         matches this foliage as the can (can material 0.15 0.70 0.25). From the can's
-         stand-off it estimated a 0.47 m wide "can" centred on plant f4, 1.8 m away, so
-         Pick reported "no reachable grasp"; the planner has 4 plans from the true
-         position. Left for the vision owner: the item colours are calibrated in
-         scene_home.xml, and a fix belongs to perception or the palette, not here. -->
+    <!-- Seen in the baseline demo (seed 35) with handwrist's calibrated-colour
+         estimator: it matched this foliage as the can (green) and estimated a
+         0.47 m wide "can" on plant f4. Pick now finds items by what they are
+         (handwrist.detection), which does not confuse a plant with a can; the
+         colour estimator is kept only for comparison. -->
     <material name="plant"   rgba="0.22 0.42 0.20 1" specular="0.22" shininess="0.35"/>
     <material name="terracotta" rgba="0.68 0.38 0.26 1" specular="0.10"/>
     <material name="soil"    rgba="0.20 0.15 0.11 1" specular="0.02"/>
     <material name="basketwv" rgba="0.74 0.66 0.50 1" specular="0.06"/>
-    <!-- item colours, unchanged from scene_home.xml: the grasp estimator
-         segments by calibrated colour windows keyed to exactly these. -->
+    <!-- item colours, unchanged from scene_home.xml. They colour the collision
+         primitives, which are not rendered: cameras see each item's "look"
+         geom (assets/household.xml). -->
     <material name="mug"    rgba="0.85 0.18 0.18 1"/>
     <material name="can"    rgba="0.15 0.70 0.25 1"/>
     <material name="remote" rgba="0.50 0.20 0.75 1"/>
@@ -451,7 +463,12 @@ HEADER = '''<mujoco model="random_house_{seed}">
        exactly what a cross-room fetch is. -->
   <default>
     <default class="item">
-      <geom condim="4" friction="1.0 0.01 0.001" solref="0.005 1" priority="1"/>
+      <geom condim="4" friction="1.0 0.01 0.001" solref="0.005 1" priority="1" group="3"/>
+    </default>
+    <!-- what the cameras see (assets/household.xml): no mass, no contacts;
+         group 2, which handwrist's footprints, surfaces and rays ignore -->
+    <default class="look">
+      <geom type="mesh" contype="0" conaffinity="0" group="2" mass="0"/>
     </default>
   </default>
 

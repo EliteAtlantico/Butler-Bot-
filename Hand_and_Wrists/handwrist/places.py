@@ -70,6 +70,18 @@ class Surface:
         return bool(np.all(np.abs(rel) <= self.half + margin))
 
 
+# The household "look" geoms (comp_vision_sim/assets/household.xml) are what
+# the cameras see: visual only, in group 2 like the robot model's own visual
+# meshes. Nothing is set down on them, parked clear of them or measured off
+# them -- the collision primitives underneath are the furniture and the person.
+LOOK_GROUP = 2
+
+
+def is_look(model, g) -> bool:
+    return bool(model.geom_group[g] == LOOK_GROUP and model.geom_contype[g] == 0
+                and model.geom_conaffinity[g] == 0)
+
+
 def _geom_top(model, data, g):
     R = data.geom_xmat[g].reshape(3, 3)
     c, h = model.geom_aabb[g, :3], model.geom_aabb[g, 3:]
@@ -81,7 +93,7 @@ def footprint_of(model, data, body_name):
     b = mujoco.mj_name2id(model, mujoco.mjtObj.mjOBJ_BODY, body_name)
     lo, hi = np.full(2, np.inf), np.full(2, -np.inf)
     for g in range(model.ngeom):
-        if model.geom_bodyid[g] != b:
+        if model.geom_bodyid[g] != b or is_look(model, g):
             continue
         R = data.geom_xmat[g].reshape(3, 3)
         c = data.geom_xpos[g] + R @ model.geom_aabb[g, :3]
@@ -135,7 +147,7 @@ def surface_of(model, data, place) -> Surface:
     axes = np.array([R[:2, k] / np.linalg.norm(R[:2, k]) for k in (0, 1)])
     b = mujoco.mj_name2id(model, mujoco.mjtObj.mjOBJ_BODY, spec.body)
     rim = max(_geom_top(model, data, i) for i in range(model.ngeom)
-              if model.geom_bodyid[i] == b)
+              if model.geom_bodyid[i] == b and not is_look(model, i))
     return Surface(center=data.geom_xpos[g].copy(), axes=axes,
                    half=model.geom_size[g][:2].copy(),
                    top=_geom_top(model, data, g), rim=rim)

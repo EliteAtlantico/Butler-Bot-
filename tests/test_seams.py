@@ -73,9 +73,9 @@ def test_every_catalogue_object_is_graspable_in_the_demo_scene():
 @pytest.mark.integration
 def test_arrival_builds_a_pick_on_the_catalogue_spec_with_the_head_camera():
     from bracketbot_sim.robot import BracketBot
+    from handwrist.detection import DetectionEstimator
     from handwrist.objects import CATALOGUE
     from handwrist.skills import Pick
-    from handwrist.vision import CameraEstimator
     from integration.pick_adapter import make_pick
 
     bot = BracketBot(xml=DEMO_SCENE)
@@ -83,13 +83,15 @@ def test_arrival_builds_a_pick_on_the_catalogue_spec_with_the_head_camera():
         pick = make_pick(bot, "keys")
         assert isinstance(pick, Pick) and pick.bot is bot
         assert pick.spec is CATALOGUE["keys"]
-        assert isinstance(pick.estimator, CameraEstimator)
+        # found by what it is, not by a calibrated colour
+        assert isinstance(pick.estimator, DetectionEstimator)
+        assert pick.estimator.aliases == {}
     finally:
         bot.close()
 
 
 def test_pick_after_arrival_hands_pick_the_resolved_name():
-    from handwrist.vision import CameraEstimator
+    from handwrist.detection import DetectionEstimator
     from integration.pick_adapter import pick_after_arrival
 
     bot = SimpleNamespace(time=0.0)
@@ -98,8 +100,19 @@ def test_pick_after_arrival_hands_pick_the_resolved_name():
         outcome = pick_after_arrival(bot, "a set of keys", verbose=False)
 
     args, kwargs = pick.call_args
-    assert args == (bot, "keys") and isinstance(kwargs["estimator"], CameraEstimator)
+    assert args == (bot, "keys") and isinstance(kwargs["estimator"], DetectionEstimator)
     assert (outcome.attempted, outcome.succeeded, outcome.object_name) == (True, True, "keys")
+
+
+def test_a_colour_in_the_request_reaches_the_detector_as_a_hint():
+    """"the red mug" is still the mug; red only ranks what the detector finds."""
+    from integration.pick_adapter import pick_after_arrival
+
+    done = SimpleNamespace(done=True, succeeded=True, failure=None, phase="done")
+    with mock.patch("handwrist.skills.Pick", return_value=done) as pick:
+        pick_after_arrival(SimpleNamespace(time=0.0), "the red mug", verbose=False)
+    args, kwargs = pick.call_args
+    assert args[1] == "mug" and kwargs["estimator"].aliases == {"mug": "red mug"}
 
 
 def test_pick_after_arrival_skips_what_the_arm_cannot_hold():

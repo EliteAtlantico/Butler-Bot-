@@ -77,8 +77,8 @@ def main():
         print(f"picking the {args.object}" + (" (finding it with the camera)"
                                               if args.vision else ""))
         if args.vision:
-            from handwrist.vision import CameraEstimator
-            return Pick(bot, args.object, estimator=CameraEstimator())
+            from handwrist.detection import DetectionEstimator
+            return Pick(bot, args.object, estimator=DetectionEstimator())
         return Pick(bot, args.object)
 
     pick = start()

@@ -154,12 +154,14 @@ def make_task(bot, action, estimator=None, verbose=True, **kwargs) -> Task:
     """Start a chore by name. Raises ValueError with a readable message for an
     unknown action, item or place.
 
-    estimator: how items are found. Default: the head camera. Pass
-    skills.truth_estimator to be told where things are (tests, debugging).
+    estimator: how items are found. Default: the head camera, finding each
+    item by what it is (detection.DetectionEstimator). Pass
+    skills.truth_estimator to be told where things are (tests, debugging), or
+    vision.CameraEstimator for the calibrated-colour finder.
     """
     if estimator is None:
-        from .vision import CameraEstimator
-        estimator = CameraEstimator()
+        from .detection import DetectionEstimator
+        estimator = DetectionEstimator()
     action = str(action).lower()
     if action == "pick":
         item = _item(kwargs)

@@ -103,9 +103,10 @@ what it found. That is inside the head camera's blind zone for floor items;
 
 ## Any object, any scene
 
-The chores above know seven items by colour and four places by name. The same
-skills also take objects and places they have never seen, which is how the LLM
-agent (`../robot_agent`) drives them:
+The chores above know seven items and four places by name, and find the items
+by what they are: an open-vocabulary detector is asked for "keys" or "a mug",
+not for a colour. The same skills also take objects and places they have never
+seen, which is how the LLM agent (`../robot_agent`) drives them:
 
 ```python
 from handwrist.detection import DetectionEstimator
@@ -123,7 +124,7 @@ place = Place(bot, pick, shelf.spec(obstacles=obstacle_boxes(bot.model, bot.data
 
 | File | What it adds |
 |---|---|
-| `handwrist/detection.py` | `DetectionEstimator`: an open-vocabulary box (YOLO-World when confident, the vision LLM otherwise) plus depth, measured with `CameraEstimator`'s geometry. 12/14 items found from benchmark viewpoints, centre error median 3 mm. |
+| `handwrist/detection.py` | `DetectionEstimator`, the default for `Pick` and the chores: an open-vocabulary box (YOLO-World when confident, the vision LLM otherwise) plus depth, measured with `CameraEstimator`'s geometry. Each catalogue item is asked for under the names a detector knows it by (`QUERIES`); a colour in the request ("the red mug") only ranks the candidates. |
 | `handwrist/surfaces.py` | `find_surfaces`: every uncovered upward-facing top at arm height, and containers, read from the scene. Reproduces `PLACES` exactly in the living room. |
 
 `Pick` accepts an `ObjectSpec` as well as a catalogue name, and `Place` /
@@ -141,7 +142,7 @@ find ──> estimate ──> plan ──> Pick ──────────�
 
 | File | What it does |
 |---|---|
-| `handwrist/vision.py` | Finds an item in the head camera: colour mask, biggest 3-D cluster, then geometry from the points. |
+| `handwrist/vision.py` | The geometry both estimators share (biggest 3-D cluster, then size and axis from the points), and `CameraEstimator`, the original calibrated-colour finder, kept for comparison. |
 | `handwrist/objects.py` | Per-item grasp knowledge (from above or the side, align the wrist, keep clear of the handle) and `ObjectEstimate`. |
 | `handwrist/gripper.py` | Finger-gap calibration from the model, and touch sensing: holding = both pads on the same object and the fingers stalled short of the close command. |
 | `handwrist/grasping.py` | Enumerates every way to grasp (table edges or floor headings × arm × wrist angle × sideways shift of the base), ranks them, and IK-checks the best. |
@@ -149,8 +150,8 @@ find ──> estimate ──> plan ──> Pick ──────────�
 | `handwrist/places.py` / `place.py` | Named places read from the scene, where to park to put something down, and the `Place` skill. |
 | `handwrist/tasks.py` | Chores: `make_task`, `fetch`, `put`, `tidy`, `pick`. |
 | `handwrist/scenarios.py` | Random placements for tests and demos. |
-| `scenes/scene_home.xml` | Living room: coffee table, side table, laundry basket, a person with a hand held out, seven items. |
-| `tools/calibrate_colours.py` | Calibrates the colour windows (`handwrist/colours.json`) from segmentation renders. |
+| `scenes/scene_home.xml` | Living room: coffee table, side table, laundry basket, a person with a hand held out, seven items. Each item and the person are dressed in a realistic textured model (`comp_vision_sim/assets/household.xml`, visual only); the collision primitives underneath are unchanged. |
+| `tools/calibrate_colours.py` | Calibrates `CameraEstimator`'s colour windows (`handwrist/colours.json`) from segmentation renders. Calibrated on the old flat-colour items; rerun it before comparing against the realistic ones. |
 
 ### Seeing
 
@@ -158,12 +159,12 @@ find ──> estimate ──> plan ──> Pick ──────────�
 depth camera's colour and depth images from one pose and lifts every pixel
 into world coordinates. On top of that:
 
-1. **Colour mask.** Per-item hue, saturation and brightness windows,
-   calibrated offline from segmentation renders (98–99 % recall). At run
-   time the detector sees colour and depth, nothing else. Where two windows
-   overlap, a pixel goes to the item whose window centre is nearer -- the
-   ball's pink runs into the mug's red, and a tidy-up once "found" a ball on
-   the table that was the mug.
+1. **What it is.** YOLO-World boxes the item by name -- a glazed mug with a
+   handle, a printed soda can, a bunch of keys on a ring -- and the depth
+   pixels in the box above the surface it stands on are the item. A colour
+   named in the request re-ranks the boxes; it never finds one. (The older
+   `CameraEstimator` masked calibrated per-item colour windows instead: a
+   robot that only knew "the purple thing" could not pick up a real remote.)
 2. **Biggest 3-D cluster**, so stray edge pixels do not drag the estimate.
 3. **Geometry from the top face.** From 1.5 m up the whole top of an upright
    item is visible, and its outline gives centre, width, length and axis.
@@ -235,8 +236,8 @@ Each of these was a failure first, found by the benchmarks.
 * `ApproachPose` checks its straight-line route against known furniture but
   does not plan detours; long routes should use `main_mujoco`'s `NavigateTo`.
 * Robot pose comes from the simulator, as for the rest of the team's stack.
-* Colour windows are per item; the team's YOLO detector returns the same
-  kind of detection and could replace the colour step.
+* Finding items needs YOLO-World (`ultralytics`, `clip`) or a vision LLM; the
+  colour estimator is still there without either.
 * The wrist cameras are unusable in the current model: `build_dynamic_model.py`
   puts each at its link's origin, ~0.8 m from the hand. A fix is prepared but
   not yet merged into `main`.
