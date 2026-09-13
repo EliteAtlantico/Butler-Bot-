@@ -28,6 +28,7 @@ import importlib.util
 import json
 import os
 import sys
+from contextlib import nullcontext
 from dataclasses import dataclass, field
 from pathlib import Path
 
@@ -59,6 +60,14 @@ ARMS = {"either": ("right", "left"), "left": ("left",), "right": ("right",)}
 
 def _wrap(a):
     return float((a + np.pi) % (2 * np.pi) - np.pi)
+
+
+class Interrupted(Exception):
+    """Raised from `on_step` to stop a tool mid-motion (operator cancel, e-stop).
+
+    It passes straight through `RobotTools.call` -- unlike every other error,
+    which becomes an ok=False result for the model -- so whoever runs the agent
+    can stop it rather than have the model carry on."""
 
 
 def blocked_by(point, footprints, clearance=ROBOT_CLEARANCE):
@@ -199,17 +208,22 @@ def tool_catalogue(surfaces=(), joints=()) -> list[Tool]:
              "Use it to compare grasp choices before pick_up.", GRASP, ("object",),
              physical=False),
         # --- manipulation
-        Tool("pick_up", "Pick the object up with the grasp you chose: plans, drives to the "
+        Tool("pick_up", "Pick the object up with the grasp you chose. Each hand holds one object: "
+             "with one hand full it uses the other arm, so two objects can be carried at once. It "
+             "plans, drives to the "
              "parking spot, reaches, closes, checks the grip by touch, lifts and stows. Retries "
              "a failed grasp twice; turns on the spot to look if it is not in view. Reports "
              "each phase it went through and where it failed.", GRASP, ("object",)),
         Tool("place_held_item", "Put down what the robot is holding: set it on a surface, or drop "
-             "it into a container. Optionally at a world x, y on that surface.",
+             "it into a container. Optionally at a world x, y on that surface. When holding two "
+             "objects, say which with object (its name, or the hand: left or right).",
              {"surface": surface,
               "mode": _str("'set' on top, 'drop' into; default: what the surface is",
                            ["auto", "set", "drop"]),
               "x": _num("world x to put it at (optional)"),
-              "y": _num("world y to put it at (optional)")}, ("surface",)),
+              "y": _num("world y to put it at (optional)"),
+              "object": _str("which held object to put down, when holding two: its name, or "
+                             "left / right")}, ("surface",)),
         # --- navigation
         Tool("go_to", "Drive to a world coordinate in metres where the robot can stand (not onto "
              "furniture or an object: use go_near for those). Longer drives first spin to map the "
@@ -354,7 +368,7 @@ class RobotTools:
 
     def __init__(self, scene=None, bot=None, truth: bool = False, detector: str = "auto",
                  llm_url: str = "http://localhost:8080/v1", llm_model: str = "Qwen/Qwen3.8-27B",
-                 on_step=None, verbose: bool = True, task_seconds: float = 360.0,
+                 on_step=None, step_lock=None, verbose: bool = True, task_seconds: float = 360.0,
                  drive_seconds: float = 240.0, search_seconds: float = 400.0):
         import mujoco
 
@@ -376,12 +390,17 @@ class RobotTools:
                 scenarios.place_robot(bot, [0.0, 0.0], 0.0)
             mujoco.mj_forward(bot.model, bot.data)
             bot.balance.enable(bot.state)
+            from handwrist.surfaces import settle_loose_items
+            settle_loose_items(bot)          # drop items onto real contacts first
         self.bot = bot
         self.truth = truth
         self.detection = DetectionEstimator(backend=detector, llm_url=llm_url, llm_model=llm_model)
         self.estimator = TruthByName() if truth else self.detection
         self.llm_url, self.llm_model = llm_url, llm_model
         self.on_step = on_step
+        # Taken around every physics chunk, when something else (the phone remote's
+        # camera renders, a viewer) reads the same MjData from another thread.
+        self.step_lock = step_lock
         self.verbose = verbose
         self.task_seconds, self.drive_seconds = task_seconds, drive_seconds
         self.search_seconds = search_seconds
@@ -391,7 +410,8 @@ class RobotTools:
         self.max_gap = float(self.grippers["right"].max_gap)
         self.surfaces = {s.name: s for s in find_surfaces(bot.model, bot.data)}
         self.estimates = {}          # object name -> last ObjectEstimate
-        self.held = None             # the successful Pick whose object is in hand
+        # side -> the successful Pick whose object that hand holds: one item per hand
+        self.held = {"right": None, "left": None}
         self.last_result = None
         self._tools = {t.name: t for t in tool_catalogue(list(self.surfaces), self.arm_joints)}
 
@@ -419,6 +439,8 @@ class RobotTools:
                                           "a person has to stand it back up"}
         try:
             result = getattr(self, f"tool_{name}")(**arguments)
+        except Interrupted:
+            raise
         except (ValueError, KeyError, TypeError) as e:
             msg = e.args[0] if isinstance(e, KeyError) and e.args else str(e)
             result = {"ok": False, "error": str(msg)}
@@ -433,16 +455,95 @@ class RobotTools:
 
     def _run(self, controller, limit: float) -> dict:
         bot, t0 = self.bot, self.bot.time
-        while not controller.done and bot.time - t0 < limit and not bot.fallen:
-            bot.step(CHUNK, controller=controller)
-            if self.on_step is not None:
-                self.on_step(bot)
+        lock = self.step_lock if getattr(self, "step_lock", None) is not None else nullcontext()
+        try:
+            while not controller.done and bot.time - t0 < limit and not bot.fallen:
+                with lock:
+                    bot.step(CHUNK, controller=controller)
+                if self.on_step is not None:
+                    self.on_step(bot)
+        except Interrupted:
+            self._abandon(controller)
+            raise
         out = {"sim_seconds": round(bot.time - t0, 1)}
         if not controller.done and not bot.fallen:
             out["timed_out"] = True
         if bot.fallen:
             out["fallen"] = True
         return out
+
+    def _abandon(self, controller):
+        """Leave a skill cut off mid-way safe: normal balance gains, no lean bias, base stopped."""
+        for skill in (getattr(controller, "current", None), controller):
+            release = getattr(skill, "_manipulating", None)
+            if callable(release):
+                release(False)
+        if hasattr(self.bot, "balance"):
+            from handwrist.skills import expire_nudge
+            expire_nudge(self.bot, force=True)
+        self.bot.drive(0.0, 0.0)
+
+    def _back_away(self, distance: float = 0.45, speed: float = 0.15, stall_after: float = 3.0,
+                   pulse: float = 0.20, max_pulses: int = 3) -> dict:
+        """Reverse straight out from the furniture the arm just worked at, before anything turns.
+
+        Ported from comp_vision_sim/baseline_demo.py (back_away), measured values unchanged.
+        Pick parks the base at arm's reach with the hull touching the furniture, and the
+        next thing to turn on the spot swings the hull's corner into it: here a second pick
+        with the other hand pitched the robot 37 deg into the coffee table and it fell.
+        A balancing robot reverses by first rolling forward, which the furniture blocks,
+        so when reversing makes no progress for `stall_after` s it gets a short backward
+        wheel pulse with the balance loop paused (-2 N m for 0.2 s, cut short past a
+        0.25 rad lean; at most `max_pulses`), then reverses again. Progress comes from the
+        wheel encoders, as on the real robot.
+        """
+        import mujoco
+
+        bot, balance = self.bot, self.bot.balance
+        lock = self.step_lock if getattr(self, "step_lock", None) is not None else nullcontext()
+
+        def tick():
+            with lock:
+                bot.step(0.02)
+            if self.on_step is not None:
+                self.on_step(bot)
+
+        start = bot.odometry
+        mark, mark_t, t0 = start, bot.time, bot.time
+        pulses = 0
+        bot.drive(-speed, 0.0)
+        try:
+            while start - bot.odometry < distance and not bot.fallen and bot.time - t0 < 20.0:
+                tick()
+                if mark - bot.odometry >= 0.01:
+                    mark, mark_t = bot.odometry, bot.time          # going backwards: leave it alone
+                elif bot.time - mark_t >= stall_after:
+                    if pulses == max_pulses:
+                        break
+                    pulses += 1
+                    with lock:
+                        balance.disable()
+                        peak = 0.0
+                        for _ in range(int(round(pulse / bot.dt))):
+                            bot.set_wheel_torque(-2.0, -2.0)
+                            mujoco.mj_step(bot.model, bot.data)
+                            peak = max(peak, abs(bot.pitch))
+                            if peak > 0.25:
+                                break                               # tipping: stop pushing
+                        balance.trim_integral = 0.0
+                        balance.enable(bot.state)                   # re-seeds the references here
+                    bot.drive(-speed, 0.0)
+                    mark, mark_t = bot.odometry, bot.time
+            bot.drive(0.0, 0.0)
+            balance.reset_reference(bot.state)
+            for _ in range(50):
+                tick()
+        except Interrupted:
+            bot.drive(0.0, 0.0)
+            raise
+        backed = start - bot.odometry
+        return {"backed_away_m": round(float(backed), 2), "pulses": pulses,
+                "clear": bool(backed >= distance)}
 
     def _settle(self):
         """Stop and let the balance loop come to rest after a manoeuvre."""
@@ -461,8 +562,9 @@ class RobotTools:
             out[side] = (None if body < 0 else
                          self._mujoco.mj_id2name(m, self._mujoco.mjtObj.mjOBJ_BODY, body)
                          or "something")
-        if self.held is not None and out.get(self.held.plan.side):
-            out[self.held.plan.side] = self.held.spec.name
+        for side, pick in self.held.items():
+            if pick is not None and out.get(side):
+                out[side] = pick.spec.name
         return out
 
     def _surface(self, name):
@@ -486,15 +588,33 @@ class RobotTools:
                          f"{s.top:.2f} m, ({c[0]:.1f}, {c[1]:.1f}), "
                          f"{s.size[0]:.2f} x {s.size[1]:.2f} m")
         lines.append(f"The gripper opens to {self.max_gap * 1000:.0f} mm, so it holds things up "
-                     f"to about {(self.max_gap - 0.02) * 1000:.0f} mm across.")
+                     f"to about {(self.max_gap - 0.02) * 1000:.0f} mm across. Each hand holds one "
+                     "object, so the robot can carry two at once.")
         lines.append(f"Robot starts at {self.pose()}. Arm joints: {', '.join(self.arm_joints)}.")
         return "\n".join(lines)
 
-    def _hands_free(self):
-        if self.held is not None and any(self.holding().values()):
-            raise ValueError(f"already holding the {self.held.spec.name}; put it down first "
-                             "with place_held_item")
-        self.held = None
+    def _forget_dropped(self):
+        """Forget a held pick whose hand no longer holds anything (dropped or released)."""
+        now = self.holding()
+        for side, pick in self.held.items():
+            if pick is not None and not now.get(side):
+                self.held[side] = None
+
+    def _free_sides(self) -> tuple:
+        self._forget_dropped()
+        return tuple(side for side in ("right", "left") if self.held[side] is None)
+
+    def _skill_arms(self) -> dict:
+        """Arm controllers for a new pick or place. A holding arm keeps the controller of the
+        pick that grasped with it (its squeeze and stow commands); a free arm starts from
+        where it is now, so manual joint moves are not undone."""
+        from bracketbot_sim.manipulation import ArmController
+        return {side: (self.held[side].arms[side] if self.held[side] is not None
+                       else ArmController(self.bot, side)) for side in ("right", "left")}
+
+    def _held_names(self) -> str:
+        return ", ".join(f"{side}: {pick.spec.name}" for side, pick in self.held.items()
+                         if pick is not None) or "nothing"
 
     def _estimate(self, spec):
         est = self.estimator(self.bot, spec)
@@ -667,8 +787,16 @@ class RobotTools:
 
     def tool_pick_up(self, **kw) -> dict:
         from handwrist.skills import Pick
-        self._hands_free()
+        free = self._free_sides()
+        if not free:
+            raise ValueError(f"both hands are full ({self._held_names()}); put one down first "
+                             "with place_held_item")
+        asked = kw.get("arm", "either")
         spec, sides = self._grasp_args(kw)
+        sides = tuple(side for side in sides if side in free)
+        if not sides:
+            raise ValueError(f"the {asked} hand is already holding the {self.held[asked].spec.name}; "
+                             f"use arm '{free[0]}' or 'either'")
         est = self._estimate(spec)
         if est is not None:
             far = float(np.linalg.norm(est.center[:2] - self.bot.position[:2]))
@@ -682,16 +810,23 @@ class RobotTools:
             plans = GraspPlanner(self.bot).plan(est, spec, sides)
             if plans:
                 lead = self._drive_to_lead_in(plans[0].base_xy, plans[0].base_yaw)
-        pick = Pick(self.bot, spec, estimator=self.estimator, sides=sides, verbose=self.verbose)
+        pick = Pick(self.bot, spec, estimator=self.estimator, sides=sides, verbose=self.verbose,
+                    arms=self._skill_arms(),
+                    keep=tuple(side for side in ("right", "left") if side not in free))
         run = self._run(pick, self.task_seconds)
+        backed = None
         if pick.succeeded:
-            self.held = pick
+            self.held[pick.plan.side] = pick
+            if not self.bot.fallen:
+                backed = self._back_away()
         phases = []
         for _, phase in pick.history:
             if not phases or phases[-1] != phase:
                 phases.append(phase)
         out = {"ok": bool(pick.succeeded), "status": pick.status, "phases": phases,
-               "retries": pick.retries, **run}
+               "retries": pick.retries, "holding": self.holding(), **run}
+        if backed is not None:
+            out["backed_away"] = backed
         if lead is not None:
             out["drove_to_lead_in"] = bool(lead.get("ok"))
         if pick.plan is not None:
@@ -701,12 +836,23 @@ class RobotTools:
         return out
 
     def tool_place_held_item(self, surface: str, mode: str = "auto", x: float | None = None,
-                             y: float | None = None) -> dict:
+                             y: float | None = None, object: str | None = None) -> dict:  # noqa: A002
         from handwrist.place import Place
         from handwrist.surfaces import obstacle_boxes
-        if self.held is None or not any(self.holding().values()):
-            self.held = None
+        self._forget_dropped()
+        held = {side: pick for side, pick in self.held.items() if pick is not None}
+        if not held:
             raise ValueError("not holding anything; pick_up something first")
+        if object:
+            wanted = str(object).strip().lower()
+            side = next((s for s, p in held.items() if wanted in (s, p.spec.name.lower())), None)
+            if side is None:
+                raise ValueError(f"not holding {object!r}; holding {self._held_names()}")
+        elif len(held) == 1:
+            side = next(iter(held))
+        else:
+            raise ValueError(f"holding two things ({self._held_names()}); say which to put down "
+                             "with object")
         found = self._surface(surface)
         if mode not in ("auto", "set", "drop"):
             raise ValueError("mode must be auto, set or drop")
@@ -720,7 +866,8 @@ class RobotTools:
                 f"the {found.name} ({found.surface.rim:.2f} m) is too high to reach over: the "
                 f"object is carried at {carry:.2f} m and the hand would hit its edge; choose a "
                 "lower surface")
-        skill = Place(self.bot, self.held, spec, verbose=self.verbose)
+        skill = Place(self.bot, held[side], spec, verbose=self.verbose, arms=self._skill_arms(),
+                      keep=tuple(s for s in held if s != side))
         targets = skill.planner.plan(spec, skill.side, skill.rel_mat, skill.grip_above_bottom,
                                      skill.kind)
         lead = None
@@ -729,9 +876,10 @@ class RobotTools:
             if lead is not None and lead.get("ok"):
                 skill.phase = "plan"             # already clear of where it picked up
         run = self._run(skill, self.task_seconds)
-        if skill.succeeded or not any(self.holding().values()):
-            self.held = None
-        out = {"ok": bool(skill.succeeded), "status": skill.status, **run}
+        if skill.succeeded or not self.holding().get(side):
+            self.held[side] = None
+        out = {"ok": bool(skill.succeeded), "status": skill.status, "hand": side,
+               "holding": self.holding(), **run}
         if lead is not None:
             out["drove_to_lead_in"] = bool(lead.get("ok"))
         if skill.target is not None:
@@ -741,7 +889,7 @@ class RobotTools:
         return out
 
     def _speed(self, normal):
-        return min(normal, CARRY_SPEED) if self.held is not None else normal
+        return min(normal, CARRY_SPEED) if any(self.held.values()) else normal
 
     def _footprints(self):
         from handwrist.surfaces import obstacle_footprints
@@ -808,8 +956,9 @@ class RobotTools:
         of parking; carrying higher to clear it made the robot fall over. So
         surfaces at or above this are refused rather than attempted."""
         from handwrist.skills import STOW_Z
-        plan = getattr(self.held, "plan", None)
-        return max(STOW_Z, float(plan.lift_pos[2])) if plan is not None else STOW_Z
+        lifts = [float(pick.plan.lift_pos[2]) for pick in self.held.values()
+                 if pick is not None and pick.plan is not None]
+        return max([STOW_Z] + lifts)
 
     def _drive_to_lead_in(self, base_xy, base_yaw, target_body=None) -> dict | None:
         """Get the skill's last metre down to a straight line.
@@ -824,7 +973,7 @@ class RobotTools:
         here = self.bot.position[:2]
         start = lead_in(base_xy, base_yaw)
         boxes = [(lo, hi) for name, lo, hi in self._footprints() if name != target_body]
-        if self.held is not None:
+        if any(self.held.values()):
             # Carrying, the skill's own slow approach (it backs away first) is the
             # safer drive: a navigator lead-in knocked the robot over with a can,
             # triggered by the coffee table it had just picked from. Only a wall
@@ -952,8 +1101,9 @@ class RobotTools:
             for joint in GRIPPER_JOINTS[s]:
                 self.bot.set_arm_target(joint, 0.0 if action == "open" else 1.0)
         run = self._run(_Hold(1.0), 2.0)
-        if action == "open" and self.held is not None and self.held.plan.side in sides:
-            self.held = None
+        if action == "open":
+            for side_opened in sides:
+                self.held[side_opened] = None
         return {"holding": self.holding(), **run}
 
     def tool_move_arm_joint(self, joint: str, value: float) -> dict:
@@ -968,8 +1118,10 @@ class RobotTools:
                 "range": [round(lo, 3), round(hi, 3)], **run}
 
     def tool_stow_arms(self) -> dict:
+        busy = {side for side, pick in self.held.items() if pick is not None}
         for joint, q in self.home.items():
-            self.bot.set_arm_target(joint, q)
+            if ("left" if joint.startswith("lj") else "right") not in busy:   # keep held items stowed
+                self.bot.set_arm_target(joint, q)
         return self._run(_Hold(2.5), 3.0)
 
     def close(self):

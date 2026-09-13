@@ -18,15 +18,51 @@ MAIN_MUJOCO = PROJECT_ROOT / "main_mujoco"
 DEFAULT_SCENE = PROJECT_ROOT / "Hand_and_Wrists" / "scenes" / "scene_home.xml"
 
 USER_CAMERAS = (
+    # A third-person view that follows the robot around the room (the model's
+    # trackcom `chase` camera): what is going on, not just what the robot sees.
+    {"id": "scene", "label": "Scene View", "model_name": "chase", "rgbd": False},
+    # Shown with the head depth sensor's downward tilt: see display_camera().
     {"id": "head-left", "label": "Left Head RGB-D",
-     "model_name": "head_stereo_left", "rgbd": True},
+     "model_name": "head_stereo_left", "rgbd": True, "tilt_from": "head_depth"},
     {"id": "head-right", "label": "Right Head RGB-D",
-     "model_name": "head_stereo_right", "rgbd": True},
+     "model_name": "head_stereo_right", "rgbd": True, "tilt_from": "head_depth"},
     {"id": "wrist-left", "label": "Left Wrist Camera",
      "model_name": "wrist_cam_left", "rgbd": False},
     {"id": "wrist-right", "label": "Right Wrist Camera",
      "model_name": "wrist_cam_right", "rgbd": False},
 )
+
+
+def display_camera(model, data, camera: dict):
+    """What the live view renders for `camera`: the model camera by name, or -- for
+    a view with `tilt_from` -- a free camera at that camera's position looking along
+    the `tilt_from` camera's direction.
+
+    The stereo head cameras in chopped_dynamic.xml look dead level from 1.54 m, so
+    with a 55 deg field of view no floor nearer than about 3 m is in frame: the
+    view was sky above an empty plane, and the table right in front of the robot
+    was out of shot. The head depth camera the robot perceives through is tilted
+    22 deg down. The display borrows that tilt and leaves the robot model's sensors
+    as they are.
+    """
+    import math
+
+    import mujoco
+    import numpy as np
+
+    tilt_from = camera.get("tilt_from")
+    if not tilt_from:
+        return camera["model_name"]
+    at = mujoco.mj_name2id(model, mujoco.mjtObj.mjOBJ_CAMERA, camera["model_name"])
+    tilt = mujoco.mj_name2id(model, mujoco.mjtObj.mjOBJ_CAMERA, tilt_from)
+    forward = -np.asarray(data.cam_xmat[tilt]).reshape(3, 3)[:, 2]    # cameras look along -z
+    view = mujoco.MjvCamera()
+    view.type = mujoco.mjtCamera.mjCAMERA_FREE
+    view.distance = 1.0
+    view.lookat[:] = np.asarray(data.cam_xpos[at]) + forward
+    view.azimuth = math.degrees(math.atan2(forward[1], forward[0]))
+    view.elevation = math.degrees(math.asin(max(-1.0, min(1.0, float(forward[2])))))
+    return view
 
 
 @dataclass(frozen=True)
@@ -52,7 +88,15 @@ class SimulationRobotAdapter:
         from bracketbot_sim.robot import BracketBot
 
         self._mujoco = mujoco
-        self._setup(BracketBot(xml=Path(scene).resolve()), owns_bot=True)
+        self.scene = Path(scene).resolve()
+        self._setup(BracketBot(xml=self.scene), owns_bot=True)
+        # Drop the scene's loose items onto real contacts before anyone drives or grasps.
+        hand_path = PROJECT_ROOT / "Hand_and_Wrists"
+        if str(hand_path) not in sys.path:
+            sys.path.insert(0, str(hand_path))
+        from handwrist.surfaces import settle_loose_items
+        with self._lock:
+            settle_loose_items(self.bot)
 
     @classmethod
     def attach(cls, bot) -> "SimulationRobotAdapter":
@@ -68,8 +112,14 @@ class SimulationRobotAdapter:
 
         self = cls.__new__(cls)
         self._mujoco = mujoco
+        self.scene = None
         self._setup(bot, owns_bot=False)
         return self
+
+    @property
+    def lock(self):
+        """Taken by every physics step and camera render on this robot."""
+        return self._lock
 
     def _setup(self, bot, owns_bot: bool):
         self._lock = threading.RLock()
@@ -85,10 +135,20 @@ class SimulationRobotAdapter:
             "right": ("right_left_gripper", "right_right_gripper"),
         }
         available = set(self.bot.camera_names)
-        missing = [camera["model_name"] for camera in USER_CAMERAS
-                   if camera["model_name"] not in available]
+        missing = [name for camera in USER_CAMERAS
+                   for name in (camera["model_name"], camera.get("tilt_from"))
+                   if name and name not in available]
         if missing:
             raise ValueError(f"Scene is missing required robot cameras: {', '.join(missing)}")
+        # A free camera takes its field of view from the model's visual settings, not
+        # from a camera. The live view renders a private copy so the tilted head views
+        # get the stereo cameras' 55 deg without changing anyone else's model (the viewer).
+        import copy
+        self._display_model = copy.deepcopy(self.bot.model)
+        head = next(camera for camera in USER_CAMERAS if camera.get("tilt_from"))
+        head_id = self._mujoco.mj_name2id(self.bot.model, self._mujoco.mjtObj.mjOBJ_CAMERA,
+                                          head["model_name"])
+        self._display_model.vis.global_.fovy = float(self.bot.model.cam_fovy[head_id])
         self._camera_condition = threading.Condition()
         self._camera_wakeup = threading.Event()
         self._camera_stop = threading.Event()
@@ -328,19 +388,22 @@ class SimulationRobotAdapter:
                     self._camera_wakeup.clear()
                     continue
 
-                _, model_name, width, height, mode = configuration
+                camera_id, _, width, height, mode = configuration
+                view = next(item for item in USER_CAMERAS if item["id"] == camera_id)
                 render_started = time.monotonic()
                 try:
                     key = (width, height, mode)
                     renderer = renderers.get(key)
                     if renderer is None:
                         renderer = self._mujoco.Renderer(
-                            self.bot.model, height=height, width=width)
+                            self._display_model, height=height, width=width)
                         if mode == "depth":
                             renderer.enable_depth_rendering()
                         renderers[key] = renderer
                     with self._lock:
-                        renderer.update_scene(self.bot.data, camera=model_name)
+                        renderer.update_scene(
+                            self.bot.data,
+                            camera=display_camera(self.bot.model, self.bot.data, view))
                     frame = renderer.render().copy()
                     if mode == "depth":
                         frame[frame > 8.0] = float("inf")

@@ -183,7 +183,7 @@ h2 { margin: 0; font-size: 1.1rem; letter-spacing: -.025em; }
 }
 .camera-buttons {
   display: grid;
-  grid-template-columns: repeat(4, 1fr);
+  grid-template-columns: repeat(5, 1fr);
   gap: .35rem;
   margin-top: .65rem;
 }

@@ -97,12 +97,16 @@ next section.
 
 ## Local voice recognition on a phone
 
-Chrome/Edge browser speech recognition remains the fast path where the browser
-provides it. Safari and other browsers fall back to recording audio with
-`MediaRecorder`, posting it to `/api/transcribe`, and transcribing it locally
-with `faster-whisper`. The transcript then enters the same `/api/task` endpoint
-as typed commands. The model is downloaded once during the first transcription;
-later transcription is local and does not require a cloud speech service.
+Every browser records the command with `MediaRecorder` and posts the audio to
+`/api/transcribe`; the robot computer transcribes it with Whisper
+(`faster-whisper`, the repository's shared `comp_vision_sim/vision_sim/speech.py`
+wrapper, `small.en` by default, GPU when there is room and the CPU otherwise).
+The browser's own speech recognition, which sends audio to a cloud service, is
+no longer used. The transcript enters the same `/api/task` endpoint as typed
+commands. The server loads the model at start-up; the first run downloads it.
+
+On the robot computer itself, `http://127.0.0.1:8000` is a secure context, so
+the microphone works in any desktop browser without certificates.
 
 To preload the default small English model before the demo:
 
@@ -150,11 +154,64 @@ Certificate Trust Settings**. A browser warning that is merely clicked through
 may still leave the page outside a trusted secure context. The remote detects
 that condition and reports it before recording.
 
+## Voice on a phone: HTTPS through Tailscale
+
+Browsers only give a page the microphone on HTTPS or `localhost`. Opened as
+`http://100.x.y.z:8000` from a phone, TALK has no microphone to use, in any
+browser. Tailscale can put a trusted certificate in front of the remote, reachable
+only from your own tailnet:
+
+~~~bash
+sudo tailscale set --operator=$USER      # once, so tailscale serve works without sudo
+tailscale serve --bg --https=10000 http://127.0.0.1:8000
+~~~
+
+The server detects this at start-up, prints `Phone with voice (HTTPS):
+https://<machine>.<tailnet>.ts.net:10000`, and the page offers a NEEDS HTTPS
+button that opens that address. `tailscale serve --https=10000 off` removes it.
+
+## The robot's voice
+
+When a task ends the page speaks the robot's final line, the model's own
+confirmation of what it did (or why it could not). The audio is made on the robot
+computer by Piper, an open-source neural voice, served from `/api/speech`, so it
+plays on whichever device the remote is open on. Install once:
+
+~~~bash
+~/miniforge3/bin/python -m pip install piper-tts==1.8.0
+~/miniforge3/bin/python -m piper.download_voices en_US-lessac-medium --data-dir ~/.local/share/piper-voices
+~~~
+
+Without Piper the server falls back to `espeak-ng`.
+
+## The LLM agent brain and the viewer
+
+By default (`--brain agent`) a request goes to `robot_agent`: the local LLM
+calls tools -- look around, go near, inspect, plan a grasp, pick up, put down,
+list surfaces -- one at a time against this same robot, reading each result
+before the next, so it is not limited to four chores and seven items. The task
+panel shows each tool call as it happens and the model's reply at the end. The
+agent steps the robot itself, in real time; the control loop stands aside until
+it finishes, and CANCEL TASK, E-STOP, the joystick or a fall interrupt it within
+0.1 s of simulated time. `--brain chores` keeps the fixed-chore pipeline.
+
+To watch the robot in 3-D while driving it from the page:
+
+~~~bash
+~/miniforge3/bin/python -m remote_control.server --viewer
+~~~
+
+Then open `http://127.0.0.1:8000`, hold TALK, and say a request. Closing the
+viewer window stops the server.
+
 ## Demo
 
 1. Confirm the phone says **CONNECTED** and the live Head L frame is moving.
-2. Switch among **HEAD L**, **HEAD R**, **WRIST L**, and **WRIST R**. Head
-   cameras also offer an RGB/depth display toggle.
+2. Switch among **SCENE** (a third-person view that follows the robot around the
+   room, shown first), **HEAD L**, **HEAD R**, **WRIST L**, and **WRIST R**. Head
+   cameras also offer an RGB/depth display toggle. The head views are shown with
+   the head depth sensor's 22 degree downward tilt; the model's stereo cameras
+   look dead level, which put everything near the robot out of shot.
 3. Move the joystick briefly. Releasing it sends an immediate stop; the
    independent 350 ms server watchdog stops stale commands.
 4. Hold **TALK**, say a command, then release. Typed commands use the same task

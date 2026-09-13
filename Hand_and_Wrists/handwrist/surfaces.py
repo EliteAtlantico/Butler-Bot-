@@ -151,15 +151,54 @@ def find_surfaces(model, data, max_top=MAX_TOP) -> list[FoundSurface]:
     return found
 
 
+def settle_loose_items(bot, clearance: float = 0.01, seconds: float = 1.0) -> int:
+    """Drop every loose item (a free body that is not the robot) into the scene.
+
+    Scenes author items resting exactly on their surfaces -- zero-distance
+    contacts -- and generated ones can start an item slightly inside furniture.
+    The first fingertip to touch such an item has the solver resolve the contact
+    all at once, and the item jumps in the hand. Lifting each item clear of what it
+    touches (by `clearance`, plus any penetration) and letting physics run for
+    `seconds` lands it on real contacts before anything drives or grasps. The robot
+    balances meanwhile. Returns how many items were dropped.
+    """
+    m, d = bot.model, bot.data
+    mujoco.mj_forward(m, d)
+    chassis = mujoco.mj_name2id(m, mujoco.mjtObj.mjOBJ_BODY, "chassis")
+    robot_root = int(m.body_rootid[chassis]) if chassis >= 0 else -1
+    items = [b for b in range(1, m.nbody)
+             if m.body_rootid[b] == b and b != robot_root and m.body_jntnum[b]
+             and m.jnt_type[m.body_jntadr[b]] == mujoco.mjtJoint.mjJNT_FREE]
+    if not items:
+        return 0
+    lift = {b: clearance for b in items}
+    for i in range(d.ncon):
+        contact = d.contact[i]
+        for g in (contact.geom1, contact.geom2):
+            b = int(m.body_rootid[m.geom_bodyid[g]])
+            if b in lift and contact.dist < 0:
+                lift[b] = max(lift[b], clearance - float(contact.dist))
+    for b, dz in lift.items():
+        joint = m.body_jntadr[b]
+        d.qpos[m.jnt_qposadr[joint] + 2] += dz
+        d.qvel[m.jnt_dofadr[joint]:m.jnt_dofadr[joint] + 6] = 0.0
+    mujoco.mj_forward(m, d)
+    bot.step(seconds)
+    return len(items)
+
+
 def obstacle_footprints(model, data, exclude_body=None, max_bottom=1.6):
-    """(name, lo_xy, hi_xy) of the fixed scenery a drive must keep clear of: one
-    per body, and one per loose world geom (walls). Things hung higher than
-    `max_bottom` (a lintel) are passed under, and decoration the robot can drive
-    over or through (skirting, rugs) is ignored."""
+    """(name, lo_xy, hi_xy) of the fixed scenery a drive must keep clear of, one
+    per geom, named after its body (a loose world geom -- a wall -- by its own name).
+
+    Per geom, not per body: a body can spread across the whole house (see below).
+    Things hung higher than `max_bottom` (a lintel) are passed under, and
+    decoration the robot can drive over or through (skirting, rugs, looks) is
+    ignored."""
     m, d = model, data
     if isinstance(exclude_body, str):
         exclude_body = mujoco.mj_name2id(m, mujoco.mjtObj.mjOBJ_BODY, exclude_body)
-    per_body, loose = {}, []
+    out = []
     for g in range(m.ngeom):
         b = int(m.geom_bodyid[g])
         if (m.geom_type[g] == mujoco.mjtGeom.mjGEOM_PLANE or not _fixed(m, b)
@@ -177,15 +216,11 @@ def obstacle_footprints(model, data, exclude_body=None, max_bottom=1.6):
         if lo[2] > max_bottom:
             continue
         if b == 0:
-            loose.append((mujoco.mj_id2name(m, mujoco.mjtObj.mjOBJ_GEOM, g) or "wall",
-                          lo[:2], hi[:2]))
-        elif b in per_body:
-            name, plo, phi = per_body[b]
-            per_body[b] = (name, np.minimum(plo, lo[:2]), np.maximum(phi, hi[:2]))
+            name = mujoco.mj_id2name(m, mujoco.mjtObj.mjOBJ_GEOM, g) or "wall"
         else:
-            per_body[b] = (mujoco.mj_id2name(m, mujoco.mjtObj.mjOBJ_BODY, b) or f"body {b}",
-                           lo[:2], hi[:2])
-    return loose + list(per_body.values())
+            name = mujoco.mj_id2name(m, mujoco.mjtObj.mjOBJ_BODY, b) or f"body {b}"
+        out.append((name, lo[:2], hi[:2]))
+    return out
 
 
 def obstacle_boxes(model, data, exclude_body=None, max_bottom=1.6):

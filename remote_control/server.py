@@ -15,11 +15,14 @@ import threading
 import time
 from urllib.parse import parse_qs, urlparse
 
+from .agent_tasks import AgentTaskManager
 from .autonomy import AutonomousTaskManager
 from .command_parser import ParsedCommand, parse_command
 from .control import ControlState
 from .robot_adapter import DEFAULT_SCENE, SimulationRobotAdapter
+from .speech import DEFAULT_MODEL as DEFAULT_STT_MODEL
 from .speech import LocalSpeechToText
+from .tts import RobotVoice
 
 
 STATIC_DIR = Path(__file__).resolve().parent / "static"
@@ -37,19 +40,38 @@ class RobotRuntime:
                  control_period: float = 0.02,
                  llm_url: str = "http://localhost:8080/v1",
                  llm_model: str = "Qwen/Qwen3.8-27B",
-                 stt_model: str = "tiny.en",
-                 stt_device: str = "cpu"):
+                 stt_model: str = DEFAULT_STT_MODEL,
+                 stt_device: str = "auto",
+                 brain: str = "agent",
+                 scene=None,
+                 preload_speech: bool = False):
         self.adapter = adapter
         self.control = ControlState(watchdog_seconds=watchdog_seconds)
-        self.tasks = AutonomousTaskManager(
-            adapter, llm_url=llm_url, llm_model=llm_model)
+        # "agent": the tool-calling LLM reasons its way through any request
+        # (robot_agent). "chores": the four fixed chores for the seven known items.
+        if brain == "agent":
+            self.tasks = AgentTaskManager(adapter, llm_url=llm_url, llm_model=llm_model,
+                                          scene=scene)
+        elif brain == "chores":
+            self.tasks = AutonomousTaskManager(adapter, llm_url=llm_url, llm_model=llm_model)
+        else:
+            raise ValueError(f"brain must be agent or chores, not {brain!r}")
+        self.brain = brain
         self.speech = LocalSpeechToText(stt_model, device=stt_device)
+        self.voice = RobotVoice()
+        self.preload_speech = preload_speech
+        # A secure (HTTPS) address for this remote, when there is one: browsers only give
+        # a page the microphone on HTTPS (or localhost), so the page links phones to it.
+        self.secure_url: str | None = None
         self.control_period = float(control_period)
         self._closing = threading.Event()
         self._thread = threading.Thread(target=self._run, name="bracketbot-control",
                                         daemon=True)
 
     def start(self):
+        if self.preload_speech:
+            threading.Thread(target=self.speech.preload, name="butlerbot-whisper-load",
+                             daemon=True).start()
         self._thread.start()
 
     def _run(self):
@@ -57,9 +79,14 @@ class RobotRuntime:
         try:
             while not self._closing.is_set():
                 safety = self.control.snapshot()
+                owns_robot = getattr(self.tasks, "owns_robot", None)
                 task_controller = (None if safety["emergency_stop"] or safety["fault"]
                                    else self.tasks.controller())
-                if task_controller is not None:
+                if callable(owns_robot) and owns_robot():
+                    # The LLM agent's tools are stepping this same robot on their own
+                    # thread; stepping it here as well would double the physics rate.
+                    pass
+                elif task_controller is not None:
                     try:
                         self.adapter.step_controller(self.control_period, task_controller)
                         self.tasks.after_step(task_controller)
@@ -166,6 +193,9 @@ class RobotRuntime:
             "telemetry": self.adapter.telemetry(),
             "camera": self.adapter.camera_diagnostics(),
             "speech": self.speech.status(),
+            "tts": self.voice.status(),
+            "secure_url": self.secure_url,
+            "brain": self.brain,
             "task": self.tasks.snapshot(),
         })
         return status
@@ -176,6 +206,19 @@ class RobotRuntime:
         if self._thread.is_alive():
             self._thread.join(timeout=2.0)
         self.adapter.close()
+
+
+def _safe_print(text: str):
+    """Log a line without letting logging break the request being served.
+
+    Every request is logged. Started as `server ... | tee log`, a closed reader made
+    each print raise BrokenPipeError inside the handler, so every request -- the page
+    included -- was dropped with an empty reply (a 502 through tailscale serve).
+    """
+    try:
+        print(text, flush=True)
+    except (OSError, ValueError):
+        pass
 
 
 class RemoteServer(ThreadingHTTPServer):
@@ -201,9 +244,11 @@ class RemoteHandler(BaseHTTPRequestHandler):
     protocol_version = "HTTP/1.1"
 
     def log_message(self, message, *args):
-        if self.path.startswith("/api/camera"):
+        # A malformed request (a phone speaking TLS to the plain-http port) is logged
+        # before `path` is parsed, and the old `self.path` raised AttributeError there.
+        if getattr(self, "path", "").startswith("/api/camera"):
             return
-        print(f"{self.client_address[0]} - {message % args}")
+        _safe_print(f"{self.client_address[0]} - {message % args}")
 
     def _headers(self, content_type: str, length: int,
                  status: HTTPStatus = HTTPStatus.OK,
@@ -258,6 +303,9 @@ class RemoteHandler(BaseHTTPRequestHandler):
                 capabilities["cameras"] = capabilities["mobile_cameras"]
             self._json(status)
             return
+        if parsed.path == "/api/speech":
+            self._speech_audio(parsed)
+            return
         if parsed.path == "/api/camera/stream":
             self._camera_stream(parsed)
             return
@@ -311,6 +359,20 @@ class RemoteHandler(BaseHTTPRequestHandler):
             content_type += "; charset=utf-8"
         self._headers(content_type, len(body))
         self.wfile.write(body)
+
+    def _speech_audio(self, parsed):
+        """The robot saying `text`, as WAV: the page plays each task's final line."""
+        text = parse_qs(parsed.query).get("text", [""])[0]
+        try:
+            audio = self.server.runtime.voice.synthesize(text)
+        except ValueError as error:
+            self._json({"ok": False, "error": str(error)}, HTTPStatus.BAD_REQUEST)
+            return
+        except RuntimeError as error:
+            self._json({"ok": False, "error": str(error)}, HTTPStatus.SERVICE_UNAVAILABLE)
+            return
+        self._headers("audio/wav", len(audio))
+        self.wfile.write(audio)
 
     def _camera_stream(self, parsed):
         query = parse_qs(parsed.query)
@@ -370,9 +432,9 @@ class RemoteHandler(BaseHTTPRequestHandler):
         except RuntimeError as error:
             if "superseded by a newer selection" in str(error):
                 return
-            print(f"Camera stream stopped: {error}")
+            _safe_print(f"Camera stream stopped: {error}")
         except Exception as error:
-            print(f"Camera stream stopped: {error}")
+            _safe_print(f"Camera stream stopped: {error}")
 
     def do_POST(self):
         path = urlparse(self.path).path
@@ -456,6 +518,33 @@ class RemoteHandler(BaseHTTPRequestHandler):
                        HTTPStatus.SERVICE_UNAVAILABLE)
 
 
+def tailscale_https_url(port: int) -> str | None:
+    """The tailnet HTTPS address that `tailscale serve` forwards to this port, if any.
+
+    Phones reach the remote over Tailscale, and over plain http:// a browser gives
+    the page no microphone at all. `tailscale serve --bg --https=10000
+    http://127.0.0.1:8000` puts a trusted certificate in front of it.
+    """
+    import shutil
+    import subprocess
+
+    exe = shutil.which("tailscale")
+    if not exe:
+        return None
+    try:
+        result = subprocess.run([exe, "serve", "status", "--json"], capture_output=True,
+                                text=True, timeout=5)
+        config = json.loads(result.stdout or "{}")
+    except (OSError, subprocess.SubprocessError, ValueError):
+        return None
+    for host, site in (config.get("Web") or {}).items():
+        for handler in ((site or {}).get("Handlers") or {}).values():
+            proxy = str((handler or {}).get("Proxy", "")).rstrip("/")
+            if proxy.endswith(f":{port}"):
+                return "https://" + (host[:-4] if host.endswith(":443") else host)
+    return None
+
+
 def local_ip() -> str:
     candidates = []
     try:
@@ -466,7 +555,7 @@ def local_ip() -> str:
                  if not address.startswith(("127.", "169.254."))), "127.0.0.1")
 
 
-def parse_args():
+def parse_args(argv=None):
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--host", default="0.0.0.0",
                         help="listen address (default: all local interfaces)")
@@ -477,23 +566,50 @@ def parse_args():
                         help="OpenAI-compatible URL of the existing local llama-server")
     parser.add_argument("--llm-model", default="Qwen/Qwen3.8-27B",
                         help="model name exposed by the existing local llama-server")
-    parser.add_argument("--stt-model", default="tiny.en",
-                        help="local faster-whisper model name or model directory")
-    parser.add_argument("--stt-device", default="cpu", choices=("cpu", "cuda"),
-                        help="device used by local speech recognition")
+    parser.add_argument("--brain", default="agent", choices=("agent", "chores"),
+                        help="agent: the tool-calling LLM reasons through any request "
+                             "(default); chores: the four fixed chores")
+    parser.add_argument("--viewer", action="store_true",
+                        help="also open the MuJoCo viewer on the same robot")
+    parser.add_argument("--stt-model", default=DEFAULT_STT_MODEL,
+                        help="Whisper (faster-whisper) model name or directory "
+                             "(default: %(default)s)")
+    parser.add_argument("--stt-device", default="auto", choices=("auto", "cpu", "cuda"),
+                        help="where Whisper runs; auto tries the GPU, then the CPU")
     parser.add_argument("--cert-file", type=Path,
                         help="TLS certificate PEM for phone microphone access")
     parser.add_argument("--key-file", type=Path,
                         help="TLS private-key PEM for phone microphone access")
-    return parser.parse_args()
+    return parser.parse_args(argv)
+
+
+def run_viewer(adapter, fps: float = 60.0):
+    """Show the robot in the MuJoCo viewer until its window is closed.
+
+    GLFW windows belong on the main thread, so this blocks there while the web
+    server runs on another. Syncing takes the adapter's lock, like every step.
+    """
+    import mujoco.viewer
+
+    # Launching runs mj_forward on the shared MjData. Unlocked, it raced the control
+    # thread's mj_step and segfaulted inside the constraint solver (mj_fwdConstraint).
+    with adapter.lock:
+        handle = mujoco.viewer.launch_passive(adapter.bot.model, adapter.bot.data,
+                                              show_left_ui=False, show_right_ui=False)
+    with handle as viewer:
+        while viewer.is_running():
+            with adapter.lock:
+                viewer.sync()
+            time.sleep(1.0 / fps)
 
 
 def serve(adapter: SimulationRobotAdapter, host: str = "0.0.0.0", port: int = 8000,
           *, watchdog_seconds: float = 0.35, on_ready=None,
           llm_url: str = "http://localhost:8080/v1",
           llm_model: str = "Qwen/Qwen3.8-27B",
-          stt_model: str = "tiny.en", stt_device: str = "cpu",
-          tls: ssl.SSLContext | None = None):
+          stt_model: str = DEFAULT_STT_MODEL, stt_device: str = "auto",
+          tls: ssl.SSLContext | None = None, brain: str = "agent",
+          viewer: bool = False, preload_speech: bool = False):
     """Serve the remote for `adapter` until Ctrl+C (or `server.shutdown()`).
 
     `on_ready(server)` is called once the socket is bound, before serving; it
@@ -503,22 +619,38 @@ def serve(adapter: SimulationRobotAdapter, host: str = "0.0.0.0", port: int = 80
     runtime = RobotRuntime(
         adapter, watchdog_seconds=watchdog_seconds,
         llm_url=llm_url, llm_model=llm_model,
-        stt_model=stt_model, stt_device=stt_device)
+        stt_model=stt_model, stt_device=stt_device,
+        brain=brain, scene=getattr(adapter, "scene", None),
+        preload_speech=preload_speech)
     server = RemoteServer((host, port), runtime)
     scheme = "http"
     if tls is not None:
         server.socket = tls.wrap_socket(server.socket, server_side=True)
         scheme = "https"
     port = server.server_address[1]
+    runtime.secure_url = (f"https://{local_ip()}:{port}" if tls is not None
+                          else tailscale_https_url(port))
     runtime.start()
     print("BracketBot Remote is ready")
     print(f"Computer: {scheme}://127.0.0.1:{port}")
     print(f"Phone:    {scheme}://{local_ip()}:{port}")
-    print("Press Ctrl+C to stop the server and robot.")
+    if runtime.secure_url and tls is None:
+        print(f"Phone with voice (HTTPS): {runtime.secure_url}")
+    elif tls is None:
+        print("Phone voice needs HTTPS. Once: sudo tailscale set --operator=$USER; then:\n"
+              f"  tailscale serve --bg --https=10000 http://127.0.0.1:{port}")
+    print(f"Brain: {brain}. Voice: Whisper {stt_model} ({stt_device}), transcribed on this computer.")
+    print("Press Ctrl+C to stop the server and robot."
+          + (" Closing the viewer window also stops it." if viewer else ""))
     if on_ready is not None:
         on_ready(server)
     try:
-        server.serve_forever(poll_interval=0.2)
+        if viewer:
+            threading.Thread(target=server.serve_forever, kwargs={"poll_interval": 0.2},
+                             name="butlerbot-http", daemon=True).start()
+            run_viewer(adapter)
+        else:
+            server.serve_forever(poll_interval=0.2)
     except KeyboardInterrupt:
         print("\nStopping BracketBot safely...")
     finally:
@@ -540,7 +672,8 @@ def main():
         adapter, args.host, args.port,
         watchdog_seconds=args.watchdog_ms / 1000.0,
         llm_url=args.llm_url, llm_model=args.llm_model,
-        stt_model=args.stt_model, stt_device=args.stt_device, tls=tls)
+        stt_model=args.stt_model, stt_device=args.stt_device, tls=tls,
+        brain=args.brain, viewer=args.viewer, preload_speech=True)
 
 
 if __name__ == "__main__":

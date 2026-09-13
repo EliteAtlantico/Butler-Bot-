@@ -88,6 +88,10 @@ class SpeechToText:
             if self.device == "cpu":
                 raise
             self._use_cpu(e)
+            # A file-like input was read to its end by the failed attempt; without
+            # rewinding, the CPU retry decodes nothing ("Invalid data ... '<none>'").
+            if hasattr(audio, "seek"):
+                audio.seek(0)
             text = self._run(self._model, audio)
         if self.verbose:
             print(f"    [voice] transcribed in {time.time() - t0:.1f}s: {text!r}")
