@@ -13,7 +13,7 @@ came up.
 """
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 
 import mujoco
 import numpy as np
@@ -28,6 +28,12 @@ class PlaceSpec:
     surface_geom: str     # the geom the item ends up resting on
     mode: str             # "set": lower onto it; "drop": release inside the rim
     preposition: str      # "on" / "in", for status messages
+    # Set for places found at run time (handwrist.surfaces) rather than listed
+    # in PLACES: the surface itself, the footprints the drive there must keep
+    # clear of, and optionally the world xy to put the item down at.
+    surface: Surface | None = field(default=None, compare=False)
+    obstacles: tuple | None = field(default=None, compare=False)
+    at: tuple | None = field(default=None, compare=False)
 
 
 PLACES = {
@@ -64,6 +70,18 @@ class Surface:
         return bool(np.all(np.abs(rel) <= self.half + margin))
 
 
+# The household "look" geoms (comp_vision_sim/assets/household.xml) are what
+# the cameras see: visual only, in group 2 like the robot model's own visual
+# meshes. Nothing is set down on them, parked clear of them or measured off
+# them -- the collision primitives underneath are the furniture and the person.
+LOOK_GROUP = 2
+
+
+def is_look(model, g) -> bool:
+    return bool(model.geom_group[g] == LOOK_GROUP and model.geom_contype[g] == 0
+                and model.geom_conaffinity[g] == 0)
+
+
 def _geom_top(model, data, g):
     R = data.geom_xmat[g].reshape(3, 3)
     c, h = model.geom_aabb[g, :3], model.geom_aabb[g, 3:]
@@ -75,7 +93,7 @@ def footprint_of(model, data, body_name):
     b = mujoco.mj_name2id(model, mujoco.mjtObj.mjOBJ_BODY, body_name)
     lo, hi = np.full(2, np.inf), np.full(2, -np.inf)
     for g in range(model.ngeom):
-        if model.geom_bodyid[g] != b:
+        if model.geom_bodyid[g] != b or is_look(model, g):
             continue
         R = data.geom_xmat[g].reshape(3, 3)
         c = data.geom_xpos[g] + R @ model.geom_aabb[g, :3]
@@ -109,8 +127,19 @@ def route_clear(points, boxes, clearance, skip_start=0.0, skip_end=0.0, step=0.0
     return True
 
 
+def resolve_place(place) -> PlaceSpec:
+    """A PLACES name, or a PlaceSpec built at run time, as a PlaceSpec."""
+    if isinstance(place, PlaceSpec):
+        return place
+    if place not in PLACES:
+        raise KeyError(f"unknown place {place!r}; know {sorted(PLACES)}")
+    return PLACES[place]
+
+
 def surface_of(model, data, place) -> Surface:
     spec = PLACES[place] if isinstance(place, str) else place
+    if spec.surface is not None:
+        return spec.surface
     g = mujoco.mj_name2id(model, mujoco.mjtObj.mjOBJ_GEOM, spec.surface_geom)
     if g < 0:
         raise KeyError(f"scene has no geom {spec.surface_geom!r} for {spec.name!r}")
@@ -118,7 +147,7 @@ def surface_of(model, data, place) -> Surface:
     axes = np.array([R[:2, k] / np.linalg.norm(R[:2, k]) for k in (0, 1)])
     b = mujoco.mj_name2id(model, mujoco.mjtObj.mjOBJ_BODY, spec.body)
     rim = max(_geom_top(model, data, i) for i in range(model.ngeom)
-              if model.geom_bodyid[i] == b)
+              if model.geom_bodyid[i] == b and not is_look(model, i))
     return Surface(center=data.geom_xpos[g].copy(), axes=axes,
                    half=model.geom_size[g][:2].copy(),
                    top=_geom_top(model, data, g), rim=rim)
@@ -165,7 +194,7 @@ class PlacePlanner:
         item was picked (rot_z(-yaw) @ grasp_mat); `grip_above_bottom` is how
         far the grasp point sits above the item's bottom.
         """
-        spec = PLACES[place]
+        spec = resolve_place(place)
         gp, bot = self.gp, self.gp.bot
         s = surface_of(bot.model, bot.data, spec)
         here, yaw_now = bot.position[:2], bot.yaw
@@ -173,22 +202,27 @@ class PlacePlanner:
             # Hover over the rim, then lower INSIDE and let go a few cm off the
             # floor. Released above the rim, a can or mug fell ~20 cm, bounced,
             # and one ended up outside the basket.
-            n_before = _drops.get((id(bot.model), place), 0)
+            n_before = _drops.get((id(bot.model), spec.name), 0)
             local = np.array(DROP_SLOTS[n_before % len(DROP_SLOTS)]) * s.half
+            if spec.at is not None:
+                local = np.clip(s.axes @ (np.asarray(spec.at, float)[:2] - s.center[:2]),
+                                -0.5 * s.half, 0.5 * s.half)
             z = s.top + grip_above_bottom + self.DROP_CLEAR
             hover = max(s.rim + grip_above_bottom + self.DROP_CLEAR - z, 0.04)
         else:
             margin = np.minimum(self.SET_INSET, 0.6 * s.half)
             bound = s.half - margin
-            local = np.clip(s.axes @ (here - s.center[:2]), -bound, bound)
+            toward = here if spec.at is None else np.asarray(spec.at, float)[:2]
+            local = np.clip(s.axes @ (toward - s.center[:2]), -bound, bound)
             z = s.top + grip_above_bottom + self.SET_CLEAR
             hover = self.HOVER
         pxy = s.center[:2] + s.axes.T @ local
         point = np.array([pxy[0], pxy[1], z])
         above = point + np.array([0.0, 0.0, hover])
         from .skills import ApproachPose
-        others = [footprint_of(bot.model, bot.data, p.body)
-                  for p in PLACES.values() if p.body != spec.body]
+        others = (list(spec.obstacles) if spec.obstacles is not None else
+                  [footprint_of(bot.model, bot.data, p.body)
+                   for p in PLACES.values() if p.body != spec.body])
         target_box = footprint_of(bot.model, bot.data, spec.body)
         target_body = mujoco.mj_name2id(bot.model, mujoco.mjtObj.mjOBJ_BODY, spec.body)
 
@@ -238,7 +272,7 @@ class PlacePlanner:
     @staticmethod
     def dropped(bot, place):
         """Record that an item went into `place`, so the next takes another slot."""
-        key = (id(bot.model), place)
+        key = (id(bot.model), resolve_place(place).name)
         _drops[key] = _drops.get(key, 0) + 1
 
     def reachable_from_here(self, target):

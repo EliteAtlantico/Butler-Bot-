@@ -3,7 +3,7 @@
 
     python eval_pick.py                          # 8 trials of every object
     python eval_pick.py --vision                 # find items with the camera
-    python eval_pick.py --objects remote keys -n 20
+    python eval_pick.py --objects remote ball -n 20
     python eval_pick.py --seed 7 --workers 4
 
 Each trial resets the home scene, drops one object at a random spot and yaw
@@ -52,8 +52,10 @@ def run_trial(job):
     truth = truth_estimate(m, d, CATALOGUE[name])
 
     if vision:
-        from handwrist.vision import CameraEstimator
-        estimator = CameraEstimator()
+        # finds the object by what it is; YOLO only, so a run does not depend
+        # on whether an LLM server happens to be up
+        from handwrist.detection import DetectionEstimator
+        estimator = DetectionEstimator(backend="yolo")
     else:
         estimator = truth_estimator
     pick = Pick(bot, name, estimator=estimator, verbose=False)

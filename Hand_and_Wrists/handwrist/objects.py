@@ -36,10 +36,8 @@ CATALOGUE = {
     "can": ObjectSpec("can", "can_body"),
     "bottle": ObjectSpec("bottle", "bottle_body", grasp="side"),
     "remote": ObjectSpec("remote", "remote_body", aligned=True, shape="box"),
-    "keys": ObjectSpec("keys", "keys_body", aligned=True, shape="box"),
     "ball": ObjectSpec("ball", "ball_body", grip_at_center=True, squeeze=0.015,
                        shape="sphere"),
-    "box": ObjectSpec("box", "box_body", aligned=True, shape="box"),
 }
 
 

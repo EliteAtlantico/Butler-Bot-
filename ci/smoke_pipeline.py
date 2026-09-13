@@ -2,7 +2,7 @@
 """End-to-end smoke of the merged pipeline, deterministic and offline.
 
     python ci/smoke_pipeline.py give-up    # command -> explore -> give up -> phone remote
-    python ci/smoke_pipeline.py pick       # drive to the keys -> Seam C pick
+    python ci/smoke_pipeline.py pick       # drive to the sideboard -> Seam C pick of the remote
     python ci/smoke_pipeline.py            # both
 
 Runs the real `run_navigation.main()` on the D2 demo scene. Only what CI
@@ -133,7 +133,14 @@ def give_up() -> list[str]:
 
 
 def pick() -> list[str]:
-    """Drive to the keys by coordinate and pick them up (Seam C), no model."""
+    """Drive to the sideboard by coordinate and pick up the remote (Seam C),
+    no model.
+
+    The arm is told where the remote is (the truth estimator). Seam C is the
+    hand-over from navigator to arm, and that is what this checks; finding
+    things with the camera is YOLO-World's job since Pick went object-first,
+    and has its own tests. A smoke that failed on detection would say nothing
+    about the seam."""
     import integration.pick_adapter as adapter
     import run_navigation as rn
 
@@ -146,7 +153,7 @@ def pick() -> list[str]:
 
     built, counting = _counting_bots()
     argv = ["run_navigation.py", "--scene", str(SCENE), "--detector", "geometric",
-            "--goal", "9.35,-2.2", "--target", "keys", "--pick"]
+            "--goal", "9.35,-2.2", "--target", "remote", "--pick", "--pick-truth"]
     with counting, mock.patch.object(sys, "argv", argv), \
             mock.patch.object(adapter, "pick_after_arrival", pick_after_arrival), \
             mock.patch.object(rn, "figure", lambda *a, **k: None):
@@ -156,8 +163,8 @@ def pick() -> list[str]:
     outcome = seen.get("outcome")
     _check(outcome is not None, "the navigator arrived and handed over to the arm", failures)
     if outcome is not None:
-        _check(outcome.object_name == "keys", f"'keys' resolved to {outcome.object_name!r}", failures)
-        _check(bool(outcome.succeeded), f"picked up the keys ({outcome.summary()})", failures)
+        _check(outcome.object_name == "remote", f"'remote' resolved to {outcome.object_name!r}", failures)
+        _check(bool(outcome.succeeded), f"picked up the remote ({outcome.summary()})", failures)
     _check(len(built) == 1, f"exactly one BracketBot exists (built {len(built)})", failures)
     return failures
 

@@ -186,7 +186,7 @@
                           <inertial pos="-0.0211672 0.094284 -0.72929" quat="0.447815 0.538612 -0.441638 0.560638" mass="0.0137253" diaginertia="8.60807e-06 7.32992e-06 4.25017e-06" />
                           <geom type="mesh" contype="0" conaffinity="0" group="1" rgba="1 1 1 1" density="0" mesh="Hand_Motor_Mount__Hand_Motor_Mount" />
                         </body>
-                        <camera name="wrist_cam_right" mode="fixed" fovy="60" pos="0 0 0" xyaxes="-0.999672 0.00768334 0.0244333 -0.0110184 -0.990169 -0.13944" />
+                        <camera name="wrist_cam_right" mode="fixed" fovy="60" pos="0.035412 0.105034 -0.710844" xyaxes="-0.94002982 0.052407572 -0.33704212 0 0.98812591 0.15364632" />
                       </body>
                       <body name="right_eef" pos="0.0337039 -0.14163 -0.0201752" quat="0.702288 0.702288 0.0824116 0.0824116">
                         <inertial pos="0 0 0" mass="4.17424e-07" diaginertia="0 0 0" />
@@ -260,7 +260,7 @@
                           <inertial pos="-0.0211672 -0.094284 -0.72929" quat="0.538612 0.447815 -0.560638 0.441638" mass="0.0137253" diaginertia="8.60807e-06 7.32992e-06 4.25017e-06" />
                           <geom type="mesh" contype="0" conaffinity="0" group="1" rgba="1 1 1 1" density="0" mesh="Hand_Motor_Mount__Hand_Motor_Mount_Mirrored" />
                         </body>
-                        <camera name="wrist_cam_left" mode="fixed" fovy="60" pos="0 0 0" xyaxes="0.999672 0.00769962 -0.0244357 -0.0110349 0.990169 -0.13944" />
+                        <camera name="wrist_cam_left" mode="fixed" fovy="60" pos="0.035412 -0.105034 -0.710844" xyaxes="0.94002993 0.052405306 0.33704215 0 -0.98812692 0.15363981" />
                       </body>
                       <body name="left_eef" pos="-0.0241696 -0.143565 0.0201752" quat="0.704649 0.704649 -0.0589006 -0.0589006">
                         <inertial pos="0 0 0" mass="4.17424e-07" diaginertia="0 0 0" />

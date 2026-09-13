@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Ask the BracketBot to do a chore.
 
-    python run_task.py fetch --item keys              # find the keys, hand them to the person
+    python run_task.py fetch --item remote            # find the remote, hand it to the person
     python run_task.py put --item remote --to basket  # pick it up, drop it in the basket
     python run_task.py tidy                           # coffee table -> basket, every item
     python run_task.py pick --item mug                # just pick it up
@@ -10,7 +10,7 @@
     --headless      no window, just the log
     --truth         be told where items are instead of finding them with the camera
 
-Items: mug, can, remote, bottle, keys, ball, box.
+Items: mug, can, remote, bottle, ball.
 Places: coffee_table, side_table, basket, person.
 """
 from __future__ import annotations

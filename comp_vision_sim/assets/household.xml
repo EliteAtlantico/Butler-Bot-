@@ -1,0 +1,44 @@
+<mujocoinclude>
+  <!-- The household items and the person, as they look. Generated meshes and
+       textures from tools/make_assets.py; included by every scene that has
+       these objects (scene_home.xml, home_search.xml, make_house.py's houses).
+
+       Paths assume the including scene sets meshdir to main_mujoco/meshes/
+       and texturedir to comp_vision_sim/assets/, as those three do.
+
+       Visual only: scenes attach these with class "look" (contype 0,
+       conaffinity 0, mass 0) over the unchanged collision primitives. -->
+  <asset>
+    <mesh name="look_mug"        file="../../comp_vision_sim/assets/mug.obj"        inertia="shell"/>
+    <mesh name="look_can"        file="../../comp_vision_sim/assets/can.obj"        inertia="shell"/>
+    <mesh name="look_bottle"     file="../../comp_vision_sim/assets/bottle.obj"     inertia="shell"/>
+    <mesh name="look_remote"     file="../../comp_vision_sim/assets/remote.obj"     inertia="shell"/>
+    <mesh name="look_ball"       file="../../comp_vision_sim/assets/ball.obj"       inertia="shell"/>
+    <mesh name="look_person"     file="../../comp_vision_sim/assets/person.obj"     inertia="shell"/>
+
+    <texture type="2d" name="look_mug"        file="mug.png"/>
+    <texture type="2d" name="look_can"        file="can.png"/>
+    <texture type="2d" name="look_bottle"     file="bottle.png"/>
+    <texture type="2d" name="look_remote"     file="remote.png"/>
+    <texture type="2d" name="look_ball"       file="ball.png"/>
+    <texture type="2d" name="look_person"     file="person.png"/>
+    <texture type="2d" name="look_wicker"     file="wicker.png"/>
+    <texture type="2d" name="look_oak"        file="wood_oak.png"/>
+    <texture type="2d" name="look_walnut"     file="wood_walnut.png"/>
+
+    <!-- glazed ceramic, printed aluminium, PET, matte plastic, metal, felt,
+         cardboard, skin and cloth: specularity is most of what tells them apart -->
+    <material name="look_mug"        texture="look_mug"        specular="0.55" shininess="0.75" reflectance="0.03"/>
+    <material name="look_can"        texture="look_can"        specular="0.75" shininess="0.80" reflectance="0.08"/>
+    <material name="look_bottle"     texture="look_bottle"     specular="0.80" shininess="0.90" reflectance="0.06"/>
+    <material name="look_remote"     texture="look_remote"     specular="0.30" shininess="0.45"/>
+    <material name="look_ball"       texture="look_ball"       specular="0.03" shininess="0.05"/>
+    <material name="look_person"     texture="look_person"     specular="0.06" shininess="0.15"/>
+    <material name="look_wicker"     texture="look_wicker"     texuniform="true" texrepeat="4 4"
+              specular="0.08" shininess="0.15"/>
+    <material name="look_tabletop"   texture="look_oak"        texuniform="true" texrepeat="2 2"
+              specular="0.35" shininess="0.45" reflectance="0.04"/>
+    <material name="look_tableleg"   texture="look_walnut"     texuniform="true" texrepeat="2 2"
+              specular="0.25" shininess="0.30"/>
+  </asset>
+</mujocoinclude>

@@ -1,0 +1,6 @@
+# Optional: spoken commands for run_navigation.py --voice.
+# faster-whisper runs OpenAI's open-source Whisper models locally (CPU or CUDA);
+# sounddevice reads the microphone through PortAudio (bundled on Windows/macOS,
+# `libportaudio` / `portaudio19-dev` from the package manager on Linux).
+faster-whisper==1.2.1
+sounddevice==0.5.6

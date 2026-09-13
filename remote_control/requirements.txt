@@ -3,3 +3,5 @@
 # one source of truth means the phone UI can never be exercised against a MuJoCo
 # or NumPy the robot model and controllers were never tested on.
 -r ../main_mujoco/requirements.txt
+requests>=2.32,<3
+faster-whisper==1.2.1

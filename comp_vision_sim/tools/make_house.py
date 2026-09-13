@@ -158,6 +158,60 @@ def overlaps(a, b, pad=0.0):
                 a[3] + pad < b[1] or b[3] + pad < a[1])
 
 
+# Pickable items, copied from scene_home.xml so the grasp tuning and the
+# committed pick baselines still apply: same sizes, masses, contact settings
+# and the geom names handwrist's CATALOGUE closes on.
+ITEM_XML = {
+    "mug": '''    <body name="mug" pos="{x:.3f} {y:.3f} {z:.3f}">
+      <freejoint name="mug_free"/>
+      <geom name="mug_body" class="item" type="cylinder" pos="0 0 0.05" size="0.04 0.05" material="mug" mass="0.22"/>
+      <geom name="mug_handle" class="item" type="box" pos="0 0.05 0.05" size="0.008 0.012 0.03"
+            material="mug" mass="0.03"/>
+      <geom class="look" mesh="look_mug" material="look_mug"/>
+    </body>\n''',
+    "can": '''    <body name="can" pos="{x:.3f} {y:.3f} {z:.3f}">
+      <freejoint name="can_free"/>
+      <geom name="can_body" class="item" type="cylinder" pos="0 0 0.06" size="0.033 0.06" material="can" mass="0.15"/>
+      <geom class="look" mesh="look_can" material="look_can"/>
+    </body>\n''',
+    "remote": '''    <body name="remote" pos="{x:.3f} {y:.3f} {z:.3f}" euler="0 0 0.4">
+      <freejoint name="remote_free"/>
+      <geom name="remote_body" class="item" type="box" pos="0 0 0.0125" size="0.09 0.024 0.0125"
+            material="remote" mass="0.12"/>
+      <geom class="look" mesh="look_remote" material="look_remote"/>
+    </body>\n''',
+}
+
+# The place destination. handwrist's PLACES looks for a body called `basket`
+# whose floor geom is `basket_floor`; the names are the contract.
+# The console the items stand on has NO decorative front panel. The general
+# furniture version does, and that panel spans x +/-0.28 at z 0.28-0.52 --
+# directly in front of a centrally placed item, where it blocks the only
+# approach the arm has. A middle item behind it reports "no reachable grasp"
+# with no hint that a 2 cm strip of trim is the reason.
+ITEM_CONSOLE_XML = '''    <body name="item_console" pos="{x:.3f} {y:.3f} 0">
+      <geom type="box" pos="0 0 0.275" size="0.80 0.24 0.275" material="darkwood"/>
+    </body>
+'''
+
+# Wicker, with a rim and hand-holds that are visual only and stay inside the
+# walls' footprint and no higher than their tops -- the place planner reads
+# the basket's rim height and footprint off every geom on this body.
+BASKET_XML = '''    <body name="basket" pos="{x:.3f} {y:.3f} 0">
+      <geom name="basket_floor" type="box" pos="0 0 0.005" size="0.22 0.17 0.005" material="look_wicker"/>
+      <geom name="basket_wall_e" type="box" pos=" 0.215 0 0.10" size="0.005 0.17 0.10" material="look_wicker"/>
+      <geom name="basket_wall_w" type="box" pos="-0.215 0 0.10" size="0.005 0.17 0.10" material="look_wicker"/>
+      <geom name="basket_wall_n" type="box" pos="0  0.165 0.10" size="0.22 0.005 0.10" material="look_wicker"/>
+      <geom name="basket_wall_s" type="box" pos="0 -0.165 0.10" size="0.22 0.005 0.10" material="look_wicker"/>
+      <geom class="look" type="box" pos=" 0.212 0 0.194" size="0.008 0.170 0.006" material="look_tabletop"/>
+      <geom class="look" type="box" pos="-0.212 0 0.194" size="0.008 0.170 0.006" material="look_tabletop"/>
+      <geom class="look" type="box" pos="0  0.162 0.194" size="0.220 0.008 0.006" material="look_tabletop"/>
+      <geom class="look" type="box" pos="0 -0.162 0.194" size="0.220 0.008 0.006" material="look_tabletop"/>
+      <geom class="look" type="box" pos=" 0.2196 0 0.165" size="0.0005 0.050 0.013" rgba="0.08 0.06 0.04 1"/>
+      <geom class="look" type="box" pos="-0.2196 0 0.165" size="0.0005 0.050 0.013" rgba="0.08 0.06 0.04 1"/>
+    </body>\n'''
+
+
 def build(seed: int):
     rng = np.random.default_rng(seed)
     W = rng.uniform(11.0, 15.0)
@@ -255,6 +309,59 @@ def build(seed: int):
                 return p
         return None
 
+    # ---- the task: things to pick up, and somewhere to put them ----------
+    # Items go on a 0.55 m console within 0.10 m of its edge.
+    # Both numbers are measured, not chosen: the arm plans no grasp at all
+    # above ~0.55 m, and none more than about 0.10 m onto a surface, because
+    # the base has to stop at the furniture and reach the rest of the way.
+    task = {"items": [], "basket": None, "console": None}
+    order_by_size = sorted(rooms, key=lambda r: -r.w * r.h)
+    spawn_room = min(rooms, key=lambda r: np.linalg.norm(r.centre))
+    far_rooms = [r for r in order_by_size if r is not spawn_room] or [spawn_room]
+
+    # console + items in the room furthest from the spawn
+    item_room = max(far_rooms, key=lambda r: np.linalg.norm(r.centre))
+    inner = item_room.inset(CLEAR + 0.2)
+    cx, cy = inner.centre if inner.w > 0 else item_room.centre
+    console_yaw = 0.0
+    placed_console = False
+    for _ in range(80):
+        x = rng.uniform(inner.x0 + 0.85, inner.x1 - 0.85)
+        y = rng.uniform(inner.y0 + 0.30, inner.y1 - 0.30)
+        rect = (x - 0.82, y - 0.26, x + 0.82, y + 0.26)
+        if any(overlaps(rect, b, 0.85) for b in blocked):
+            continue
+        parts.append(ITEM_CONSOLE_XML.format(x=x, y=y))
+        blocked.append(rect)
+        task["console"] = (x, y)
+        placed_console = True
+        break
+    if not placed_console:
+        return None
+
+    cx, cy = task["console"]
+    # three items along the console, each 0.10 m in from its near (-y) edge
+    for k, name in enumerate(("mug", "can", "remote")):
+        parts.append(ITEM_XML[name].format(x=cx - 0.40 + 0.40 * k, y=cy - 0.14, z=0.55))
+        task["items"].append(name)
+
+    # the basket goes in the SPAWN room, so every put crosses a doorway
+    binner = spawn_room.inset(CLEAR + 0.2)
+    for _ in range(160):
+        x = rng.uniform(binner.x0, binner.x1)
+        y = rng.uniform(binner.y0, binner.y1)
+        if np.hypot(x, y) < 1.6:                 # not on top of the robot
+            continue
+        rect = (x - 0.30, y - 0.25, x + 0.30, y + 0.25)
+        if any(overlaps(rect, b, 0.75) for b in blocked):
+            continue
+        parts.append(BASKET_XML.format(x=x, y=y))
+        blocked.append(rect)
+        task["basket"] = (x, y)
+        break
+    if task["basket"] is None or len(task["items"]) < 3:
+        return None
+
     start = np.zeros(2)                      # the robot's own spawn
     # Goal in the room furthest from the spawn, so the route has to cross the
     # house and pass through at least one doorway.
@@ -274,7 +381,7 @@ def build(seed: int):
                      f'directional="false" diffuse="0.40 0.37 0.33" '
                      f'attenuation="1 0.05 0.02" cutoff="72"/>\n')
     parts.append(FOOTER)
-    return "".join(parts), start, goal, len(rooms), (W, H)
+    return "".join(parts), start, goal, len(rooms), (W, H), task
 
 
 HEADER = '''<mujoco model="random_house_{seed}">
@@ -283,6 +390,8 @@ HEADER = '''<mujoco model="random_house_{seed}">
        told none of it and arrives with a goal coordinate and a depth camera. -->
   <include file="../main_mujoco/chopped_dynamic.xml"/>
   <compiler meshdir="../main_mujoco/meshes/" texturedir="assets/"/>
+  <include file="assets/household.xml"/>
+  <option noslip_iterations="5"/>
 
   <statistic center="6 0 1.0" extent="8.0"/>
   <visual>
@@ -315,10 +424,36 @@ HEADER = '''<mujoco model="random_house_{seed}">
     <material name="metal"   texture="t_metal" texuniform="true" texrepeat="1 1" specular="0.75" shininess="0.72"
               reflectance="0.12"/>
     <material name="carton"  rgba="0.72 0.58 0.38 1" specular="0.05"/>
+    <!-- Seen in the baseline demo (seed 35) with handwrist's calibrated-colour
+         estimator: it matched this foliage as the can (green) and estimated a
+         0.47 m wide "can" on plant f4. Pick now finds items by what they are
+         (handwrist.detection), which does not confuse a plant with a can; the
+         colour estimator is kept only for comparison. -->
     <material name="plant"   rgba="0.22 0.42 0.20 1" specular="0.22" shininess="0.35"/>
     <material name="terracotta" rgba="0.68 0.38 0.26 1" specular="0.10"/>
     <material name="soil"    rgba="0.20 0.15 0.11 1" specular="0.02"/>
+    <material name="basketwv" rgba="0.74 0.66 0.50 1" specular="0.06"/>
+    <!-- item colours, unchanged from scene_home.xml. They colour the collision
+         primitives, which are not rendered: cameras see each item's "look"
+         geom (assets/household.xml). -->
+    <material name="mug"    rgba="0.85 0.18 0.18 1"/>
+    <material name="can"    rgba="0.15 0.70 0.25 1"/>
+    <material name="remote" rgba="0.50 0.20 0.75 1"/>
   </asset>
+
+  <!-- Item contact settings, from scene_home.xml. The noslip pass stops a
+       squeezed item creeping out of the fingers during a long carry, which is
+       exactly what a cross-room fetch is. -->
+  <default>
+    <default class="item">
+      <geom condim="4" friction="1.0 0.01 0.001" solref="0.005 1" priority="1" group="3"/>
+    </default>
+    <!-- what the cameras see (assets/household.xml): no mass, no contacts;
+         group 2, which handwrist's footprints, surfaces and rays ignore -->
+    <default class="look">
+      <geom type="mesh" contype="0" conaffinity="0" group="2" mass="0"/>
+    </default>
+  </default>
 
   <worldbody>
     <light pos="6 0 6" dir="0 0 -1" directional="true" diffuse="0.22 0.21 0.19"/>
@@ -343,12 +478,15 @@ def main():
     while result is None:
         result = build(rng_seed)
         rng_seed += 1000
-    xml, start, goal, nrooms, (W, H) = result
+    xml, start, goal, nrooms, (W, H), task = result
     Path(a.out).write_text(xml, encoding="utf-8")
     print(f"seed {a.seed}: {nrooms} rooms in {W:.1f} x {H:.1f} m")
     print(f"start ({start[0]:.2f}, {start[1]:.2f})   goal ({goal[0]:.2f}, {goal[1]:.2f})"
           f"   {np.linalg.norm(goal-start):.1f} m apart")
     print(f"wrote {a.out}")
+    print(f"items {task['items']} on a console at "
+          f"({task['console'][0]:.2f}, {task['console'][1]:.2f}); "
+          f"basket at ({task['basket'][0]:.2f}, {task['basket'][1]:.2f})")
     print(f"\n  python run_navigation.py --scene {Path(a.out).name} --detector geometric \\\n"
           f"      --goal {goal[0]:.2f},{goal[1]:.2f} --viewer")
 

@@ -28,7 +28,7 @@ from bracketbot_sim.manipulation import ArmController
 
 from .grasping import GraspPlanner
 from .gripper import Gripper
-from .objects import CATALOGUE, truth_estimate
+from .objects import CATALOGUE, ObjectSpec, truth_estimate
 
 STOW_FWD = 0.22      # carry the item this far ahead of the base...
 STOW_Z = 0.72        # ...at this height, where every wrist yaw is reachable
@@ -420,9 +420,12 @@ class ArmSkill:
                                  f"store state under another name")
         super().__setattr__(name, value)
 
-    def __init__(self, bot, arms, grippers, label, control_period=0.02, verbose=True):
+    def __init__(self, bot, arms, grippers, label, control_period=0.02, verbose=True, keep=()):
         self.bot = bot
         self.arms = arms
+        # Sides whose arm this skill must leave alone: the robot is holding
+        # something else in that hand, and bringing "both arms home" would drag it.
+        self.keep = frozenset(keep)
         self.grippers = grippers
         self.label = label
         self.control_period = control_period
@@ -513,7 +516,10 @@ class ArmSkill:
     def _arms_home(self, dt):
         """Rate-limit both arms back to the home pose. True once there."""
         home = True
-        for a in self.arms.values():
+        for side, a in self.arms.items():
+            if side in self.keep:
+                a.hold()
+                continue
             step = a.speeds * dt
             a.q_cmd = a.q_cmd + np.clip(-a.q_cmd, -step, step)
             a.apply()
@@ -557,13 +563,23 @@ class Pick(ArmSkill):
     SEARCH_STOPS = 9                  # a full turn
 
     def __init__(self, bot, name, estimator=truth_estimator, sides=("right", "left"),
-                 max_retries=2, control_period=0.02, verbose=True):
-        if name not in CATALOGUE:
+                 max_retries=2, control_period=0.02, verbose=True, arms=None, keep=()):
+        # A CATALOGUE name, or an ObjectSpec for anything else: how to hold an
+        # object the catalogue has never heard of, chosen by the caller.
+        if isinstance(name, ObjectSpec):
+            spec = name
+        elif name in CATALOGUE:
+            spec = CATALOGUE[name]
+        else:
             raise KeyError(f"unknown object {name!r}; know {sorted(CATALOGUE)}")
-        super().__init__(bot, {s: ArmController(bot, s) for s in ("right", "left")},
+        # `arms`: controllers to reuse. An arm already holding something must keep the
+        # controller that grasped with it: a fresh one starts from the measured finger
+        # position, which is short of the squeeze command, and loosens the grip.
+        arms = arms or {}
+        super().__init__(bot, {s: arms.get(s) or ArmController(bot, s) for s in ("right", "left")},
                          {s: Gripper(bot, s) for s in ("right", "left")},
-                         f"pick up the {name}", control_period, verbose)
-        self.spec = CATALOGUE[name]
+                         f"pick up the {spec.name}", control_period, verbose, keep=keep)
+        self.spec = spec
         self.estimator = estimator
         self.sides = sides
         self.planner = GraspPlanner(bot)

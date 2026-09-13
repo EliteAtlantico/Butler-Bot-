@@ -40,7 +40,7 @@ def test_command_prompt_does_not_say_the_robot_cannot_pick():
 
 # ------------------------------------------------------------------- Seam C
 @pytest.mark.parametrize("spoken, name", [
-    ("a set of keys", "keys"), ("the remote control", "remote"), ("my mug", "mug"),
+    ("the tv remote", "remote"), ("the remote control", "remote"), ("my mug", "mug"),
     ("Coffee Cup!", "mug"), ("mugs", "mug"), ("a tennis ball", "ball"),
 ])
 def test_navigator_targets_resolve_to_catalogue_names(spoken, name):
@@ -73,33 +73,46 @@ def test_every_catalogue_object_is_graspable_in_the_demo_scene():
 @pytest.mark.integration
 def test_arrival_builds_a_pick_on_the_catalogue_spec_with_the_head_camera():
     from bracketbot_sim.robot import BracketBot
+    from handwrist.detection import DetectionEstimator
     from handwrist.objects import CATALOGUE
     from handwrist.skills import Pick
-    from handwrist.vision import CameraEstimator
     from integration.pick_adapter import make_pick
 
     bot = BracketBot(xml=DEMO_SCENE)
     try:
-        pick = make_pick(bot, "keys")
+        pick = make_pick(bot, "remote")
         assert isinstance(pick, Pick) and pick.bot is bot
-        assert pick.spec is CATALOGUE["keys"]
-        assert isinstance(pick.estimator, CameraEstimator)
+        assert pick.spec is CATALOGUE["remote"]
+        # found by what it is, not by a calibrated colour
+        assert isinstance(pick.estimator, DetectionEstimator)
+        assert pick.estimator.aliases == {}
     finally:
         bot.close()
 
 
 def test_pick_after_arrival_hands_pick_the_resolved_name():
-    from handwrist.vision import CameraEstimator
+    from handwrist.detection import DetectionEstimator
     from integration.pick_adapter import pick_after_arrival
 
     bot = SimpleNamespace(time=0.0)
     done = SimpleNamespace(done=True, succeeded=True, failure=None, phase="done")
     with mock.patch("handwrist.skills.Pick", return_value=done) as pick:
-        outcome = pick_after_arrival(bot, "a set of keys", verbose=False)
+        outcome = pick_after_arrival(bot, "the tv remote", verbose=False)
 
     args, kwargs = pick.call_args
-    assert args == (bot, "keys") and isinstance(kwargs["estimator"], CameraEstimator)
-    assert (outcome.attempted, outcome.succeeded, outcome.object_name) == (True, True, "keys")
+    assert args == (bot, "remote") and isinstance(kwargs["estimator"], DetectionEstimator)
+    assert (outcome.attempted, outcome.succeeded, outcome.object_name) == (True, True, "remote")
+
+
+def test_a_colour_in_the_request_reaches_the_detector_as_a_hint():
+    """"the red mug" is still the mug; red only ranks what the detector finds."""
+    from integration.pick_adapter import pick_after_arrival
+
+    done = SimpleNamespace(done=True, succeeded=True, failure=None, phase="done")
+    with mock.patch("handwrist.skills.Pick", return_value=done) as pick:
+        pick_after_arrival(SimpleNamespace(time=0.0), "the red mug", verbose=False)
+    args, kwargs = pick.call_args
+    assert args[1] == "mug" and kwargs["estimator"].aliases == {"mug": "red mug"}
 
 
 def test_pick_after_arrival_skips_what_the_arm_cannot_hold():

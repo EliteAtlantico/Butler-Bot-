@@ -10,6 +10,7 @@
     ./run_navigation.py --detector llm --survey   # 8 labelled photos, one LLM query, then drive
     ./run_navigation.py --scene search_course.xml --explore   # YOLO searches; the LLM picks waypoints
     ./run_navigation.py --scene home_search.xml --command "find me a key"   # say what to find
+    ./run_navigation.py --scene home_search.xml --voice   # speak it; Whisper transcribes locally
 
 The robot spins once to map the room with its depth camera, finds the red
 column, then A*s a path around the barrier it can see and drives it --
@@ -157,9 +158,29 @@ def parse_args(argv=None):
                         "asks). The local LLM works out the object and where it is usually "
                         "kept, then the robot searches those places with --explore, and hands "
                         "over (remote control, not merged yet) if it cannot find it")
+    p.add_argument("--voice", action="store_true",
+                   help="speak the --command into the microphone instead of typing it; "
+                        "an open-source Whisper model transcribes it locally and the "
+                        "text goes to the LLM (needs requirements-voice.txt)")
+    p.add_argument("--voice-file", default=None, metavar="AUDIO",
+                   help="transcribe this recording (wav, mp3, ...) as the spoken "
+                        "command instead of using the microphone; implies --voice")
+    p.add_argument("--voice-seconds", type=float, default=10.0,
+                   help="longest recording; Enter stops it sooner")
+    p.add_argument("--whisper-model", default="small.en",
+                   help="faster-whisper model: tiny.en, base.en, small.en, medium.en, "
+                        "large-v3, ... fetched on first use (default: %(default)s)")
+    p.add_argument("--whisper-device", default="auto", choices=["auto", "cpu", "cuda"],
+                   help="where Whisper runs; auto falls back to the CPU")
+    p.add_argument("--mic", default=None,
+                   help="input device index or name substring (default: system default)")
     p.add_argument("--explore-step", type=float, default=3.5,
                    help="farthest a single exploration waypoint may be (m)")
     args = p.parse_args(argv)
+    if args.voice_file:
+        args.voice = True
+    if args.voice and args.command is None:
+        args.command = ""             # speak it instead of asking for it
     if args.command is not None:
         args.explore = True           # a spoken request is a search
     return args
@@ -222,7 +243,8 @@ def build_command(args, ask=input):
     if args.command is None:
         return None
     from vision_sim.llm_command import CommandInterpreter
-    text = args.command or ask("What should I find? ")
+    text = args.command or (getattr(args, "voice", False) and hear_command(args, ask)) \
+        or ask("What should I find? ")
     task = CommandInterpreter(base_url=args.llm_url, model=args.llm_model,
                               thinking=args.llm_thinking, verbose=True).parse(text)
     print(f"command: \"{task.command}\" -> {task.summary()}")
@@ -230,6 +252,24 @@ def build_command(args, ask=input):
     if task.ok and args.target is None:
         args.target = task.target
     return task
+
+
+def hear_command(args, ask=input) -> str:
+    """The spoken command as text, or "" so the caller can ask for it typed."""
+    from vision_sim.speech import SpeechToText, listen
+    stt = SpeechToText(args.whisper_model, device=args.whisper_device, verbose=True)
+    mic = int(args.mic) if args.mic and args.mic.isdigit() else args.mic
+    try:
+        text = (stt.transcribe(args.voice_file) if args.voice_file
+                else listen(stt, args.voice_seconds, ask=ask, device=mic))
+    except Exception as e:  # no model package, no microphone, unreadable file
+        print(f"voice: unavailable ({type(e).__name__}: {e})")
+        return ""
+    if not text:
+        print("voice: heard nothing")
+        return ""
+    print(f"voice: heard \"{text}\"")
+    return text
 
 
 def hand_off_to_remote_control(nav, reason, task=None):

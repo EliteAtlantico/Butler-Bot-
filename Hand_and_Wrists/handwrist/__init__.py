@@ -9,7 +9,7 @@ The pipeline, in the order the data flows:
     skills     Pick: (search) -> approach -> reach -> close -> verify -> lift -> stow
     places     named places to put things (tables, basket, the person's hand)
     place      Place: back off -> drive over -> lower -> let go -> retreat
-    tasks      chores by name: make_task(bot, "fetch", item="keys"), "put", "tidy"
+    tasks      chores by name: make_task(bot, "fetch", item="remote"), "put", "tidy"
 
 The robot itself (model, balance controller, arm IK) lives in ../../main_mujoco
 and the camera plumbing in ../../comp_vision_sim; both are imported from
