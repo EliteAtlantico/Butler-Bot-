@@ -159,6 +159,68 @@ def can_mesh():
     return revolve(outline, 36)
 
 
+def uv_sphere(radius=1.0, seg=24, rings=16):
+    lat = np.linspace(0, np.pi, rings + 1)[1:-1]
+    verts = [[0, 0, radius]]
+    for t in lat:
+        for a in np.linspace(0, 2 * np.pi, seg, endpoint=False):
+            verts.append([radius * np.sin(t) * np.cos(a),
+                          radius * np.sin(t) * np.sin(a),
+                          radius * np.cos(t)])
+    verts.append([0, 0, -radius])
+    verts = np.array(verts, float)
+    faces = []
+    idx = lambda i, j: 1 + i * seg + (j % seg)
+    for j in range(seg):
+        faces.append([0, idx(0, j), idx(0, j + 1)])
+    for i in range(len(lat) - 1):
+        for j in range(seg):
+            a, b = idx(i, j), idx(i, j + 1)
+            c, d = idx(i + 1, j), idx(i + 1, j + 1)
+            faces += [[a, c, d], [a, d, b]]
+    last = len(verts) - 1
+    for j in range(seg):
+        faces.append([last, idx(len(lat) - 1, j + 1), idx(len(lat) - 1, j)])
+    return verts, np.array(faces, np.int32)
+
+
+def foliage_mesh(seed=4):
+    """A canopy of overlapping lobes, each one lumpy.
+
+    A single smooth sphere is the giveaway that a plant is a placeholder: real
+    foliage has a broken silhouette. Displacing the radius by a few low
+    harmonics gives that outline, and clustering several lobes at different
+    scales stops it reading as one ball.
+    """
+    rng = np.random.default_rng(seed)
+    lobes = [((0.00, 0.00, 0.00), 0.30), ((0.17, 0.06, -0.06), 0.20),
+             ((-0.15, 0.10, -0.04), 0.19), ((0.04, -0.17, -0.03), 0.18),
+             ((-0.05, -0.06, 0.16), 0.17), ((0.11, 0.13, 0.10), 0.145)]
+    V, F = [], []
+    for (cx, cy, cz), r in lobes:
+        v, f = uv_sphere(r, 20, 13)
+        d = v / np.linalg.norm(v, axis=1, keepdims=True)
+        bump = np.ones(len(v))
+        for _ in range(4):                       # a few random harmonics
+            axis = rng.normal(size=3)
+            axis /= np.linalg.norm(axis)
+            k = rng.uniform(2.5, 6.0)
+            bump += 0.13 * np.sin(k * (d @ axis) + rng.uniform(0, 6.28))
+        v = d * (r * bump)[:, None] + np.array([cx, cy, cz])
+        F.append(f + sum(len(x) for x in V))
+        V.append(v)
+    return np.vstack(V), np.vstack(F)
+
+
+def pot_mesh():
+    """Tapered pot with a rolled rim -- the shape that says 'terracotta'."""
+    outline = np.array([[0.000, 0.000], [0.115, 0.000], [0.120, 0.010],
+                        [0.148, 0.240], [0.152, 0.276], [0.168, 0.286],
+                        [0.170, 0.300], [0.150, 0.302], [0.140, 0.292],
+                        [0.136, 0.284], [0.000, 0.280]])
+    return revolve(outline, 40)
+
+
 # ---------------------------------------------------------------- textures
 def _noise(shape, octaves=4, seed=0):
     rng = np.random.default_rng(seed)
@@ -239,6 +301,8 @@ def main():
         "mug": mug_mesh(),
         "bottle": bottle_mesh(),
         "can": can_mesh(),
+        "foliage": foliage_mesh(),
+        "pot": pot_mesh(),
     }
     for name, (v, f) in meshes.items():
         write_stl(OUT / f"{name}.stl", v, f)

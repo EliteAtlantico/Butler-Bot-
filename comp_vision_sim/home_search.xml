@@ -77,6 +77,8 @@
     <mesh name="m_mug"       file="../../comp_vision_sim/assets/mug.stl"/>
     <mesh name="m_bottle"    file="../../comp_vision_sim/assets/bottle.stl"/>
     <mesh name="m_can"       file="../../comp_vision_sim/assets/can.stl"/>
+    <mesh name="m_foliage"   file="../../comp_vision_sim/assets/foliage.stl"/>
+    <mesh name="m_pot"       file="../../comp_vision_sim/assets/pot.stl"/>
 
     <!-- texuniform on an infinite plane scales the texture by world distance,
          so texrepeat sets the board pitch: the sheet holds 7 boards, and 1.6
@@ -96,7 +98,9 @@
     <material name="metal"   texture="t_metal" texuniform="true" texrepeat="1 1"
               specular="0.75" shininess="0.72" reflectance="0.12"/>
     <material name="carton"  rgba="0.72 0.58 0.38 1" specular="0.05"/>
-    <material name="plant"   rgba="0.25 0.45 0.25 1" specular="0.12"/>
+    <material name="plant"   rgba="0.22 0.42 0.20 1" specular="0.22" shininess="0.35"/>
+    <material name="terracotta" rgba="0.68 0.38 0.26 1" specular="0.10"/>
+    <material name="soil"    rgba="0.20 0.15 0.11 1" specular="0.02"/>
     <material name="white"   rgba="0.94 0.93 0.89 1" specular="0.15"/>
     <material name="skirting" rgba="0.93 0.92 0.89 1" specular="0.12" shininess="0.3"/>
     <!-- Warm brass, deliberately at hue ~33 deg: handwrist's calibrated `keys`
@@ -233,11 +237,23 @@
       <geom type="box" pos="0.05 0.03 0.68" size="0.22 0.22 0.18" material="carton"/>
     </body>
 
-    <!-- a potted plant: thin trunk, wide head, a classic depth-camera nuisance -->
+    <!-- A potted plant: thin trunk, wide head -- still the classic depth-camera
+         nuisance it was built to be. The collision shapes are the original
+         cylinders and sphere, untouched, so it presents the planner exactly
+         the same obstacle; the terracotta pot and the lumpy canopy are visual
+         only and sit over the top of them. -->
     <body name="plant" pos="3.6 2.4 0">
-      <geom type="cylinder" pos="0 0 0.16" size="0.18 0.16" material="carton"/>
-      <geom type="cylinder" pos="0 0 0.55" size="0.035 0.28" material="darkwood"/>
-      <geom type="sphere"   pos="0 0 0.95" size="0.34" material="plant"/>
+      <geom type="cylinder" pos="0 0 0.16" size="0.18 0.16" material="carton" group="3"/>
+      <geom type="cylinder" pos="0 0 0.55" size="0.035 0.28" material="darkwood" group="3"/>
+      <geom type="sphere"   pos="0 0 0.95" size="0.34" material="plant" group="3"/>
+      <geom type="mesh" mesh="m_pot" pos="0 0 0" material="terracotta"
+            contype="0" conaffinity="0" group="0"/>
+      <geom type="cylinder" pos="0 0 0.281" size="0.132 0.006" material="soil"
+            contype="0" conaffinity="0" group="0"/>
+      <geom type="cylinder" pos="0 0 0.50" size="0.024 0.22" material="darkwood"
+            contype="0" conaffinity="0" group="0"/>
+      <geom type="mesh" mesh="m_foliage" pos="0 0 0.95" material="plant"
+            contype="0" conaffinity="0" group="0"/>
     </body>
 
     <!-- ============ room B: living ============ -->
