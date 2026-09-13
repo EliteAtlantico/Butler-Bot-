@@ -153,7 +153,8 @@ def find_surfaces(model, data, max_top=MAX_TOP) -> list[FoundSurface]:
 def obstacle_footprints(model, data, exclude_body=None, max_bottom=1.6):
     """(name, lo_xy, hi_xy) of the fixed scenery a drive must keep clear of: one
     per body, and one per loose world geom (walls). Things hung higher than
-    `max_bottom` (a lintel) are passed under."""
+    `max_bottom` (a lintel) are passed under, and decoration the robot can drive
+    over or through (skirting, rugs) is ignored."""
     m, d = model, data
     if isinstance(exclude_body, str):
         exclude_body = mujoco.mj_name2id(m, mujoco.mjtObj.mjOBJ_BODY, exclude_body)
@@ -162,6 +163,14 @@ def obstacle_footprints(model, data, exclude_body=None, max_bottom=1.6):
         b = int(m.geom_bodyid[g])
         if (m.geom_type[g] == mujoco.mjtGeom.mjGEOM_PLANE or not _fixed(m, b)
                 or b == exclude_body):
+            continue
+        # Decoration, not scenery: a geom that can neither collide with nor be
+        # collided into is there to be looked at. Skipped per geom, not per body,
+        # because a body may carry both (a plant's visual leaves, its solid pot).
+        # home_search.xml's skirting is one body of eleven strips round the whole
+        # flat; merged into one AABB below it covered 94 m^2 -- the entire floor --
+        # so every go_to in that scene was refused as "too close to the trim".
+        if m.geom_contype[g] == 0 and m.geom_conaffinity[g] == 0:
             continue
         lo, hi = _world_aabb(m, d, g)
         if lo[2] > max_bottom:
