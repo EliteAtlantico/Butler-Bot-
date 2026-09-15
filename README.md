@@ -11,7 +11,7 @@ and you drive it from your phone with a joystick, typed commands, or your voice.
 ![MuJoCo](https://img.shields.io/badge/sim-MuJoCo%203.13-orange)
 ![YOLO-World](https://img.shields.io/badge/vision-YOLO--World-00FFFF)
 
-*Built for **Battle of the Schools**. Read the full story on [Devpost](https://devpost.com/software/butler-bot).*
+*Built for **Battle of the Schools**. [Devpost](https://devpost.com/software/butler-bot).*
 
 </div>
 
@@ -30,17 +30,17 @@ inside a full MuJoCo physics simulation. It combines open-vocabulary vision, an
 LLM that plans with tool calls, and a phone remote, so manual control is always
 available whatever the autonomy is doing.
 
-## ✨ Features
+##  Features
 
 | | |
 |---|---|
-| 📱 **Phone remote** | Virtual joystick, arm and gripper control, live camera feed (scene, head, and wrist views, with an RGB/depth toggle), and an **E-STOP**. |
-| 🗣️ **Voice and text commands** | *"Put the remote in the basket, then hand me the can."* Speech is transcribed **locally** with Whisper, and the robot answers out loud with Piper TTS. |
-| 🧠 **LLM agent brain** | A local LLM carries out requests by calling tools (look around, go near, inspect, plan a grasp, pick up, put down) and reads each result before choosing the next step. There is no fixed list of chores. |
-| 👁️ **Find anything by name** | Pretrained **YOLO-World** detects objects it was never trained on in this simulator ("a TV remote", "a floor lamp"), with a vision LLM as a fallback. |
-| 🗺️ **Search the house** | Occupancy mapping and A\* planning. When the target isn't in view, the LLM looks at an 8-photo 360° survey and picks where to search next. |
-| 🦾 **Real grasping** | Friction grasps (no welds) from a self-balancing base. The planner chooses a top or side grasp, the arm, the wrist angle, and where to park, then checks it with IK. |
-| 🛟 **Hands back control** | If a search gives up, the robot hands you the phone remote with the same robot in the same place. Moving the joystick at any time cancels the current task. |
+|  **Phone remote** | Virtual joystick, arm and gripper control, live camera feed (scene, head, and wrist views, with an RGB/depth toggle), and an **E-STOP**. |
+|  **Voice and text commands** | *"Put the remote in the basket, then hand me the can."* Speech is transcribed **locally** with Whisper, and the robot answers out loud with Piper TTS. |
+|  **LLM agent brain** | A local LLM carries out requests by calling tools (look around, go near, inspect, plan a grasp, pick up, put down) and reads each result before choosing the next step. There is no fixed list of chores. |
+|  **Find anything by name** | Pretrained **YOLO-World** detects objects it was never trained on in this simulator ("a TV remote", "a floor lamp"), with a vision LLM as a fallback. |
+|  **Search the house** | Occupancy mapping and A\* planning. When the target isn't in view, the LLM looks at an 8-photo 360° survey and picks where to search next. |
+|  **Real grasping** | Friction grasps (no welds) from a self-balancing base. The planner chooses a top or side grasp, the arm, the wrist angle, and where to park, then checks it with IK. |
+|  **Hands back control** | If a search gives up, the robot hands you the phone remote with the same robot in the same place. Moving the joystick at any time cancels the current task. |
 
 ## 📊 Results
 
@@ -60,7 +60,7 @@ Per-trial data is in [`Hand_and_Wrists/results/`](Hand_and_Wrists/results/).
 CI re-runs the pick benchmark and checks that it matches the committed baseline
 **bit for bit**.
 
-## 🏗️ How it works
+##  How it works
 
 ```mermaid
 flowchart LR
@@ -100,7 +100,7 @@ The repo is split into four subsystems, plus glue code that joins them:
 
 Each directory has its own README with the details.
 
-## 🚀 Getting started
+##  Getting started
 
 ### Prerequisites
 
@@ -132,7 +132,7 @@ pip install -r remote_control/requirements.txt   # phone remote + Whisper
 
 ### Run it
 
-**📱 The phone remote (the main demo)**
+** The phone remote (the main demo)**
 
 ```bash
 python -m remote_control.server
@@ -149,7 +149,7 @@ Add `--viewer` to watch the robot in 3D at the same time. Browsers only allow
 the microphone over HTTPS, so for voice on a phone see
 [Voice through Tailscale](remote_control/README.md#voice-on-a-phone-https-through-tailscale).
 
-**🧠 Talk to the agent directly**
+**Talk to the agent directly**
 
 ```bash
 python -m robot_agent "put the remote in the basket, then hand me the can"
@@ -158,14 +158,14 @@ python -m robot_agent --voice          # speak your requests
 python -m robot_agent --list-tools     # see what the LLM can do
 ```
 
-**🔎 Search a house for something**
+** Search a house for something**
 
 ```bash
 python comp_vision_sim/run_navigation.py --scene comp_vision_sim/home_search.xml \
     --command "find me a key"
 ```
 
-**🦾 Chores without an LLM**
+** Chores without an LLM**
 
 ```bash
 cd Hand_and_Wrists
@@ -174,7 +174,7 @@ python run_task.py put --item remote --to basket
 python run_task.py tidy                           # everything on the coffee table -> basket
 ```
 
-**⚖️ Just the balancing robot**
+** Just the balancing robot**
 
 ```bash
 cd main_mujoco
@@ -186,7 +186,7 @@ python run.py --algorithm pick    # drive around an obstacle and pick a cube off
 > Windows, `glfw` for the viewer, `egl` on headless Linux, and `osmesa` in a
 > container with no GPU. The entry points pick a sensible default.
 
-## 🧪 Testing
+##  Testing
 
 ```bash
 python -m pytest                              # the whole suite
@@ -203,7 +203,7 @@ CI (GitHub Actions) runs three jobs on every push:
 
 See [`TESTING.md`](TESTING.md) for coverage and the test markers.
 
-## 🧗 Challenges and what we learned
+## Challenges and what we learned
 
 The hardest part was not any single component. It was **getting every part to
 agree on what the robot was doing at any moment**, across navigation,
@@ -225,23 +225,16 @@ from getting there:
 - **Keep manual control available.** However good the autonomy gets, the phone
   can always take over.
 
-## 🔭 What's next
+##  What's next
 
 - Understanding vaguer requests, and longer multi-step tasks
 - Better detection of small items (keys were too small for the head camera at pick range)
 - Moving from simulation to the real BracketBot hardware
 
-## 👥 Team
 
-| | |
-|---|---|
-| **Arham Aamir** | |
-| **Khalil Chaghouri** | |
-| **Dev Arun** | ECE @ UofT |
-| **Tianjun Xu** | MechE @ UofT |
 
 <div align="center">
 
-**[See the project on Devpost →](https://devpost.com/software/butler-bot)**
+**https://devpost.com/software/butler-bot)**
 
 </div>
